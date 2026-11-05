@@ -18,7 +18,7 @@ export function parseLoopSettingsV1(text: string, layer = false): ObjectValue {
       if (typeof child === "number" && !Number.isFinite(child)) throw invalid();
       if (Array.isArray(child)) { for (const item of child) visit(item); }
       else if (object(child)) for (const key of Object.keys(child)) {
-        if (forbidden.has(key)) throw invalid();
+        if (forbidden.has(key) || key === "paid" || key === "paidPin") throw invalid();
         visit(child[key]);
       }
     };

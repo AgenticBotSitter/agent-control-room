@@ -1,3 +1,5 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4ProviderServiceV1, seedS4ProviderV1 } from './helpers/improve-control-room-loop-recovery';
+import { randomBytes } from 'node:crypto';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Client, Pool } from "pg";
@@ -63,7 +65,8 @@ async function syntheticFixture(f:Fixture,options:{prePolicySchema?:boolean}={})
   const { canonicalJson, hmacSha256Tag } = await import("../src/security");
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`,[f.project.projectId]);
-  const settingsText='{"fixture":"SYNTHETIC B4"}', description="SYNTHETIC finished improvement";
+  if(!options.prePolicySchema)await seedS4ProviderV1(f.client,scope);
+  const settingsText=options.prePolicySchema?'{"fixture":"SYNTHETIC B4"}':JSON.stringify({fixture:"SYNTHETIC B4",providerRoute:S4_FIXTURE_ROUTE}), description="SYNTHETIC finished improvement";
   const run={adapterId:"adapter:synthetic",loopRunId:"synthetic-run:b4",toolingRevision,a2SchemaVersion:1 as const};
   const confirmedContract={...contract,matchesSavedInput:(_run:unknown,o:{settingsDigest:string;confirmation:{sha256:string}},i:{description:string;settingsText:string}) =>
     o.settingsDigest===loopByteHashV1(i.settingsText) && o.confirmation.sha256===loopByteHashV1(i.description)};
@@ -72,7 +75,7 @@ async function syntheticFixture(f:Fixture,options:{prePolicySchema?:boolean}={})
     confirmation:{path:"request.md",sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:"owner",input_version:"SYNTHETIC:1"},
     approval:null,question:null,progress:{step:"final",completed:1,attention:"none"},receipts:[]};
   const forbidden:string[]=[], unexpected=async()=>{forbidden.push("unexpected operation");throw new Error("SYNTHETIC forbidden");};
-  const adapter:import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,
+  const adapter:import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,providerRoutes:s4FixtureRoutes,
     reserveRun:()=>run.loopRunId,available:()=>true,status:async()=>structuredClone(status),intake:unexpected,confirmRequest:unexpected,approve:unexpected,answer:unexpected,
     start:async(id,b,fence)=>{fence();status={...status,state:"running",revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC Start"})}]};return structuredClone(status);},
     stop:unexpected,close:async()=>{}};
@@ -90,8 +93,28 @@ async function syntheticFixture(f:Fixture,options:{prePolicySchema?:boolean}={})
       console.log('B4 historical Start policy_sources_absent=true');
     }
   }(f.client,scope,adapter,()=>now):undefined;
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter,...(policy?{policy}:{})},()=>now);
-  await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-synthetic-start-0001");
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,scope,()=>now),integrityKey:KEY,adapter,...(policy?{policy}:{})},()=>now);
+  if(options.prePolicySchema){
+    // Construct predecessor history under its own CHECKs. The current service
+    // never newly dispatches a route-less Start, including against an old schema.
+    await policy!.validateStartWaiver(f.client);
+    const authorization=(await f.client.query<{id:string}>('SELECT id FROM control_loop_improvement_authorizations WHERE request_id=$1',[draft.request.requestId])).rows[0]!.id;
+    const commandId=`loop-command:${randomBytes(16).toString('hex')}`;
+    const binding:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1={schemaVersion:1,
+      body:{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},localVersion:1,...run,schemaDigest,
+      requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText),runLinkId:link.runLink.runLinkId,
+      authorizationId:authorization,inputVersion:status.inputVersion,expectedRevision:4,evidence:null};
+    const insert=async(entry_kind:'claim'|'result',result:unknown)=>{
+      const material={tenant_id:scope.tenantId,command_id:commandId,entry_kind,request_id:draft.request.requestId,project_id:f.project.projectId,
+        owner_identity_id:f.identity.subject,operation:'start',idempotency_key:'b4-synthetic-start-0001',binding,result,created_at:new Date(now).toISOString()};
+      const row={...material,record_digest:sha256Digest(material),auth_tag:hmacSha256Tag(KEY,{purpose:'loop-improvement-command/v1',record:material})};
+      const columns=Object.keys(row),values=Object.values(row).map(value=>value&&typeof value==='object'?JSON.stringify(value):value);
+      await f.client.query(`INSERT INTO control_loop_improvement_commands(${columns.join(',')}) VALUES(${columns.map((_,i)=>'$'+(i+1)).join(',')})`,values);
+    };
+    await insert('claim',null);const observed=await adapter.start(commandId,binding,()=>{});
+    await insert('result',{state:'accepted',revision:observed.revision,adapterId:run.adapterId,loopRunId:run.loopRunId,
+      toolingRevision:run.toolingRevision,evidenceDigest:observed.receipts[0]!.evidenceDigest,error:null});
+  }else await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-synthetic-start-0001");
   const head="b".repeat(40),base="a".repeat(40),d=sha256Digest({fixture:"SYNTHETIC B4 custody"});
   const startedAt=new Date(now-1000).toISOString(),endedAt=new Date(now).toISOString();
   let evidence:import("../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateEvidenceV1=loopCandidateEvidenceSchemaV1.parse({schemaVersion:1,
@@ -268,7 +291,8 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0306%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/migrations/0309%' AND filename NOT LIKE 'db/migrations/0310%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0306%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/migrations/0309%' AND filename NOT LIKE 'db/migrations/0310%' AND filename NOT LIKE 'db/migrations/0311%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  await admin.query(await readFile("db/down/0311_control_loop_paid_admission.sql","utf8"));
   await admin.query(await readFile("db/down/0310_control_loop_policy_enforcement.sql","utf8"));
   await admin.query(await readFile("db/down/0309_control_loop_provider_prices.sql","utf8"));
   await admin.query(await readFile("db/down/0308_control_loop_providers.sql","utf8"));
@@ -277,7 +301,7 @@ test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger"
   await admin.query(await readFile("db/down/0305_control_loop_roster.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -375,6 +399,7 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   assert.ok(files.includes("db/migrations/0302_control_loop_improvement_commands.sql"));assert.ok(!files.includes("db/migrations/0303_control_loop_update_candidates.sql"));
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
+   await admin.query(await readFile("db/down/0311_control_loop_paid_admission.sql","utf8"));
    await admin.query(await readFile("db/down/0310_control_loop_policy_enforcement.sql","utf8"));
   await admin.query(await readFile("db/down/0309_control_loop_provider_prices.sql","utf8"));
    await admin.query(await readFile("db/down/0308_control_loop_providers.sql","utf8"));
@@ -383,7 +408,7 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   await admin.query(await readFile("db/down/0305_control_loop_roster.sql","utf8"));
    await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}},{prePolicySchema:true});
@@ -617,9 +642,10 @@ test('S2 PostgreSQL failed price migration leaves neither table nor ledger entry
  const admin=new Client(pg.admin());await admin.connect();
  const stage=await mkdtemp(resolve('.test-tmp/s2-migration-'));
  try{
+  await admin.query(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
   await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
   await admin.query(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/roles/%'");
   const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
   const entries=await collectLedgerEntries(resolve('.'));
   for(const entry of entries){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}

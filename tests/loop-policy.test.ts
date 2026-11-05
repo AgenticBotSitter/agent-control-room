@@ -78,12 +78,47 @@ test("P71 composition refuses decoded duplicate, prototype, secret, inherited ov
   assert.throws(() => composeLoopSettingsV1({ defaultsText: JSON.stringify({ a: 'é'.repeat(33000) }) }), refused, "bound counts UTF-8 bytes");
 });
 
-test("P71 preserves unknown paid-named settings without assigning authority", () => {
-  const text = '{"paid":false,"nested":{"paidPin":null},"array":[{"paid":true}],"providerRoute":{"providerId":"fixture","model":"fixture-model"}}';
+test("P71 preserves other unknown settings without assigning authority", () => {
+  const text = '{"paidly":false,"nested":{"paidPinNote":null},"array":[{"otherUnknown":true}],"providerRoute":{"providerId":"fixture","model":"fixture-model"}}';
   for (const source of ['defaultsText', 'project', 'selection', 'runEdits'] as const) {
     const input = { defaultsText: '{}', [source]: text };
     assert.deepEqual(JSON.parse(composeLoopSettingsV1(input).text), JSON.parse(text), source);
   }
+});
+
+test("S4 composition refuses reserved consent in every source before merge", () => {
+  for (const name of ['paid','paidPin']) for (const value of [null,false]) {
+    for (const poison of [{[name]:value},{nested:{[name]:value}},{array:[{[name]:value}]}]) {
+      for (const source of ['defaultsText','project','selection','runEdits'] as const)
+        assert.throws(() => composeLoopSettingsV1({defaultsText:'{}',[source]:JSON.stringify(poison)}),refused,`${source} ${JSON.stringify(poison)}`);
+    }
+    assert.throws(() => composeLoopSettingsV1({defaultsText:JSON.stringify({nested:{[name]:value}}),selection:'{"nested":null}'}),refused,'shadowed lower source still refuses');
+  }
+  const positive={otherUnknown:{paidly:false},providerRoute:{providerId:'fixture',model:'fixture-model'}};
+  assert.deepEqual(JSON.parse(composeLoopSettingsV1({defaultsText:'{}',selection:JSON.stringify(positive)}).text),positive);
+});
+
+test('S4 real policy PUT and intake refuse consent without any writes or checker calls',async t=>{
+ const f=await policyFixture(t);
+ const {ImproveControlRoomLoopServiceV1}=await import('../src/web/v1/improve-control-room-loop-service');
+ const {createImproveControlRoomHttpHandlerV1}=await import('../src/web/v1/improve-control-room-http');
+ const recorded=recordedIntakeAdapter(f.tools);
+ const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:new Uint8Array(32).fill(65),adapter:recorded.adapter,policy:f.service},()=>now);
+ const handler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
+ const path=`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/intake`;
+ const tables=['control_loop_policy_layers','control_loop_policy_events','control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_improvement_commands','control_loop_policy_input_sources','control_loop_policy_waivers'];
+ const rows=()=>Promise.all(tables.map(async table=>(await f.db.query(`SELECT * FROM ${table}`)).rows));
+ const before=await rows();
+ for(const name of ['paid','paidPin'])for(const value of [null,false])for(const poison of [{[name]:value},{nested:{[name]:value}},{array:[{[name]:value}]}]){
+  const settings=JSON.stringify(poison);
+  for(const layer of ['project','selection'])assert.equal((await f.put(layer,{expectedVersion:0,settings})).status,400);
+  assert.equal((await handler(request(path,'POST',{description:'Reserved consent',settingsEdits:settings},key()))).status,400);
+  f.tools.settingsText=settings;
+  assert.equal((await handler(request(path,'POST',{description:'Poisoned defaults'},key()))).status,400);
+  assert.equal((await f.put('selection',{expectedVersion:0,settings:'{}'})).status,400);
+  f.tools.settingsText=defaults;
+ }
+ assert.deepEqual(await rows(),before);assert.equal(f.checks.length,0);assert.equal(recorded.signedText(),undefined);
 });
 
 test("P71 Linux CI excludes exactly three macOS host gates without skip-as-pass", async t => {
@@ -206,6 +241,7 @@ test("P71 downgrade refuses retained run-edit commands before changing the schem
   const before = (await f.db.query('SELECT * FROM control_loop_improvement_commands')).rows;
   for (const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
     assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  await f.db.exec(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
   await f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
   const schemaBefore = await readPrivateWebSchemaDigest(f.client);
@@ -221,6 +257,7 @@ test("P71 empty downgrade restores the validated pre-P71 release schema pin", as
   const f = await policyFixture(t);
   await f.db.exec(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
   await f.db.exec(await readFile('db/down/0308_control_loop_providers.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
   await f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
   await f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8'));

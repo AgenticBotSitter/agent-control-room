@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "0c8044142b71e057fab5fc9f89e1f3aad93b773966932ab8c31fa3d447be3f29",
-  "note": "Through 0310 policy enforcement. Web and updater queries agree in PGlite and native PostgreSQL 17."
+  "digest": "0d0e9128a6492569aad05dfc35c024ac5d52ac5c393f882143a23a3c1d7cee9e",
+  "note": "Through provisional 0311 paid admission (lead to renumber). Web and updater queries agree in PGlite and native PostgreSQL 17."
 }

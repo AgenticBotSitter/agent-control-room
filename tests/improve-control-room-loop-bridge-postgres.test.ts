@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4ProviderServiceV1, seedS4ProviderV1 } from './helpers/improve-control-room-loop-recovery';
 import { LoopPolicyServiceV1 } from "../src/web/v1/loop-policy-service";
 import { databaseSqlStateV1, type DatabaseClient, type DatabaseSession } from "../src/persistence/database";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
@@ -31,12 +32,12 @@ const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 60280);
 const scope={tenantId:"tenant:b1b",workspaceId:"workspace:b1b"}, project="project:b1b",owner="identity:b1b", KEY=new Uint8Array(32).fill(67);
 const at=new Date(Date.now()-60000).toISOString(),expires=new Date(Date.now()+3600000).toISOString();
 const identity:VerifiedWebIdentity={provider:"test",subject:owner,tokenDigest:sha256Digest({session:"b1b"}),issuedAt:at,expiresAt:expires,verificationExpiresAt:expires};
-const settingsText=JSON.stringify({project:{host_adapter:"local-loop"},fixture:"SYNTHETIC"});
+const settingsText=JSON.stringify({project:{host_adapter:"local-loop"},fixture:"SYNTHETIC",providerRoute:S4_FIXTURE_ROUTE});
 async function sql(pg:Pg,query:string,params:unknown[]=[],role="admin",database=pg.database){
   const client=new Client(role==="admin"?pg.admin({database}):pg.connection(role,{database}));await client.connect();
   try{return await client.query(query,params);}finally{await client.end();}
 }
-async function seed(pg:Pg,database=pg.database){
+async function seed(pg:Pg,database=pg.database,withProviders=true){
   await sql(pg,"INSERT INTO tenants(id,display_name) VALUES($1,'Fixture tenant')",[scope.tenantId],"admin",database);
   await sql(pg,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Fixture workspace')",[scope.workspaceId,scope.tenantId],"admin",database);
   await sql(pg,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
@@ -50,8 +51,9 @@ async function seed(pg:Pg,database=pg.database){
   await sql(pg,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
     VALUES('grant:b1b',$1,$2,'owner','["*"]','["*"]','critical',true,false,$3,$3)`,[scope.tenantId,owner,at],"admin",database);
   await sql(pg,"INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)",[scope.tenantId,identity.tokenDigest,owner,at,expires],"admin",database);
+  if(withProviders)await seedS4ProviderV1({query:async(query,params)=>sql(pg,query,params,"admin",database)},scope);
 }
-function engine(){
+function engine(ready=false){
   const toolingRevision=`sha256:${"a".repeat(64)}`,runs=new Map<string,LoopEngineStatusV1>(),calls:{op:string;id:string}[]=[];
   const contract={toolingRevision,decodeRunIdentity:(v:unknown)=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:(v:unknown)=>loopImprovementObservationSchemaV1.parse(v),
     matchesSavedInput:(_r:unknown,o:{settingsDigest:string;confirmation:{path:string}},input:{settingsText:string})=>o.settingsDigest===loopByteHashV1(input.settingsText)&&o.confirmation.path==="request.md"};
@@ -65,7 +67,7 @@ function engine(){
     if(op==="approve"){s.approval=null;s.state="running";s.revision++;}
     s.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({op,id})});runs.set(b.loopRunId,s);return structuredClone(s);
   };
-  const adapter:LoopAdapterV1={adapterId:"adapter:synthetic",toolingRevision,schemaDigest:`sha256:${"b".repeat(64)}`,settingsText,contract,
+  const adapter:LoopAdapterV1={providerRoutes:{...s4FixtureRoutes,paidExecutionReady:ready},adapterId:"adapter:synthetic",toolingRevision,schemaDigest:`sha256:${"b".repeat(64)}`,settingsText,contract,
     checkSettings:async()=>({eligible:true,reasons:[]}),reserveRun:()=>`fixture-run-${randomBytes(16).toString("hex")}`,available:()=>true,
     intake:(id,b,text,_f,signed)=>apply("intake",id,b,text,signed),confirmRequest:(id,b)=>apply("confirm",id,b),start:(id,b)=>apply("start",id,b),stop:(id,b)=>apply("stop",id,b),
     approve:(id,b)=>apply("approve",id,b),answer:(id,b,text)=>apply("answer",id,b,text),status:async run=>{const s=runs.get(run);assert.ok(s);return structuredClone({...s,decisions:{observedAt:new Date().toISOString(),gate:
@@ -75,8 +77,9 @@ function engine(){
 function web(pg:Pg,adapter:LoopAdapterV1,database=pg.database){
   const login=pg.connection("web",{database}), config={host:"127.0.0.1",port:pg.port,database,username:login.user,password:login.password,majorVersion:17 as const};
   const bound=bindPrivatePgPool(new Pool({...privatePgOptions(config),host:login.host,max:1}));
-  const policy=new LoopPolicyServiceV1(bound.client,scope,adapter);
-  return {...bound,config,policy,bridge:new ImproveControlRoomLoopServiceV1(bound.client,scope,{integrityKey:KEY,adapter,policy}),desk:new ImproveControlRoomDeskServiceV1(bound.client,scope,KEY,undefined,Date.now,adapter.contract)};
+  const providers=s4ProviderServiceV1(bound.client,scope);
+  const policy=new LoopPolicyServiceV1(bound.client,scope,adapter,Date.now,providers);
+  return {...bound,config,policy,bridge:new ImproveControlRoomLoopServiceV1(bound.client,scope,{integrityKey:KEY,adapter,policy,providers}),desk:new ImproveControlRoomDeskServiceV1(bound.client,scope,KEY,undefined,Date.now,adapter.contract)};
 }
 async function run(work:(pg:Pg)=>Promise<void>){
   assert.ok(requiresRealPostgres(),"B1b deciding tests require PostgreSQL17; never skip");
@@ -101,7 +104,7 @@ test("B1b fresh production login, exact grants, journal and measured digests",as
     assert.equal(actual,privateWebSchemaDigest);assert.equal(actual,updater);
     assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json","utf8")).digest,actual);
     await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:"test"},Date.now(),{nativeQueue:true});
-    const started=await w.bridge.mutate(identity,project,id,"start",{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},"b1b-pg-start-0001");assert.equal(started.state,"accepted");
+    const started=await w.bridge.mutate(identity,project,id,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},"b1b-pg-start-0001");assert.equal(started.state,"accepted");
     for(const action of ["UPDATE control_loop_improvement_commands SET created_at=created_at","DELETE FROM control_loop_improvement_commands","TRUNCATE control_loop_improvement_commands"])
       await assert.rejects(w.client.query(action),{sqlState:"42501"});
     for(const role of ["app","scheduler","control_room_work_intake_agent","coordinator","results","publisher","queueWorker","intake","news","fleet"])
@@ -119,7 +122,7 @@ test("B1b PostgreSQL 24 connections contend on one Start and retry uncertainty",
   await seed(pg);const e=engine(),{w,id,s}=await confirmed(pg,e);await w.close();
   const clients=Array.from({length:24},()=>web(pg,e.adapter));
   let reached=0,release!:()=>void;const barrier=new Promise<void>(resolve=>{release=resolve;});
-  const body={expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
+  const body={route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
   try{
     const blocker=new Client(pg.admin());await blocker.connect();
     let results: PromiseSettledResult<Awaited<ReturnType<ImproveControlRoomLoopServiceV1["mutate"]>>>[];
@@ -158,7 +161,7 @@ test("B1b PostgreSQL 24 connections contend on one Start and retry uncertainty",
 test("B1b SQL claim uniqueness guard",async()=>run(async pg=>{
   await seed(pg);const e=engine(),{w,id,s}=await confirmed(pg,e);
   try{
-    await w.bridge.mutate(identity,project,id,"start",{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},"b1b-pg-unique-0001");
+    await w.bridge.mutate(identity,project,id,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},"b1b-pg-unique-0001");
     const original=(await sql(pg,"SELECT * FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0];
     const row={...original,command_id:`loop-command:${randomBytes(16).toString('hex')}`,idempotency_key:"b1b-pg-unique-0002"};
     const columns=Object.keys(row),values=Object.values(row).map(v=>v&&typeof v==='object'&&!(v instanceof Date)?JSON.stringify(v):v);
@@ -169,6 +172,7 @@ test("B1b SQL claim uniqueness guard",async()=>run(async pg=>{
 test("B1b empty down/re-up and failed migration roll back atomically",async()=>run(async pg=>{
   const baseline=await readPrivateWebSchemaDigest({query:async(q,p)=>sql(pg,q,p)});
   const down=await readFile("db/down/0302_control_loop_improvement_commands.sql","utf8"),up=await readFile("db/migrations/0302_control_loop_improvement_commands.sql","utf8");
+  await sql(pg,await readFile("db/down/0311_control_loop_paid_admission.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0310_control_loop_policy_enforcement.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0306_control_loop_policy.sql","utf8"),[],"migrator");
@@ -180,6 +184,7 @@ test("B1b empty down/re-up and failed migration roll back atomically",async()=>r
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0306_control_loop_policy.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0307_control_loop_policy_validate.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0310_control_loop_policy_enforcement.sql","utf8")}\nCOMMIT;`,[],"migrator");
+  await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0311_control_loop_paid_admission.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,"GRANT SELECT,INSERT ON control_loop_improvement_commands TO control_room_private_web");
   const roleSql=await readFile("db/roles/private_web_roles.sql","utf8");
   await sql(pg,"BEGIN;"+roleSql.slice(roleSql.indexOf("-- P71:")));
@@ -356,7 +361,7 @@ test("P71 PostgreSQL production grants, immutable sources/audit, copies and reta
       const c=await restarted.bridge.mutate(identity,project,a.requestId,'confirm',{expectedVersion:1,expectedRevision:s.engine.revision,
         requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},'p71-native-confirm-a-0001');assert.equal(c.state,'accepted');
       s=await restarted.bridge.status(identity,project,a.requestId);assert.equal(s.request.currentVersion,2);
-      assert.equal((await restarted.bridge.mutate(identity,project,a.requestId,'start',{expectedVersion:2,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},'p71-native-start-a-000001')).state,'accepted');
+      assert.equal((await restarted.bridge.mutate(identity,project,a.requestId,'start',{route:S4_FIXTURE_ROUTE,expectedVersion:2,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},'p71-native-start-a-000001')).state,'accepted');
       const copies=(await sql(pg,'SELECT settings_text FROM control_loop_improvement_inputs WHERE request_id=$1 ORDER BY version',[a.requestId])).rows;
       assert.deepEqual(copies.map(r=>r.settings_text),[aInput.settings_text,aInput.settings_text]);
       const sourceCopies=(await sql(pg,'SELECT defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources WHERE request_id=$1 ORDER BY input_version',[a.requestId])).rows;
@@ -378,7 +383,7 @@ function pgPolicy(pg:Pg,adapter:LoopAdapterV1,identityForCall=identity,wrap?:(tx
   const w=web(pg,adapter);
   const db:DatabaseClient=wrap?{query:w.client.query.bind(w.client),transaction:work=>w.client.transaction(tx=>work(wrap(tx))),
     transactionWithPreCommitCheck:(work,check)=>w.client.transactionWithPreCommitCheck(tx=>work(wrap(tx)),check)}:w.client;
-  return{...w,policy:new LoopPolicyServiceV1(db,scope,adapter),who:identityForCall};
+  return{...w,policy:new LoopPolicyServiceV1(db,scope,adapter,Date.now,s4ProviderServiceV1(db,scope)),who:identityForCall};
 }
 async function secondOwner(pg:Pg){
   const who={...identity,subject:'identity:p71-second',tokenDigest:sha256Digest({session:'p71-second'})};
@@ -415,8 +420,8 @@ test('P71 PostgreSQL 24 checked writers, replay, distinct-owner mutex and intake
     try{
       const before=Number((await blocker.query('SELECT deadlocks FROM pg_stat_database WHERE datname=$1',[pg.database])).rows[0].deadlocks);
       await blocker.query('BEGIN');await blocker.query('SELECT id FROM projects WHERE id=$1 FOR UPDATE',[project]);
-      const pairGate=checkBarrier(2);first.policy=new LoopPolicyServiceV1(first.client,scope,{...e.adapter,checkSettings:pairGate.check});
-      second.policy=new LoopPolicyServiceV1(second.client,scope,{...e.adapter,checkSettings:pairGate.check});
+      const pairGate=checkBarrier(2);first.policy=new LoopPolicyServiceV1(first.client,scope,{...e.adapter,checkSettings:pairGate.check},Date.now,s4ProviderServiceV1(first.client,scope));
+      second.policy=new LoopPolicyServiceV1(second.client,scope,{...e.adapter,checkSettings:pairGate.check},Date.now,s4ProviderServiceV1(second.client,scope));
       const pending=Promise.allSettled([first,second].map((w,i)=>w.policy.put(w.who,project,'selection',{expectedVersion:0,settings:'{}'},`p71-native-owner-first-${i}`)));
       let waiting=0;const until=Date.now()+10000;
       while(Date.now()<until){await blocker.query('SELECT pg_stat_clear_snapshot()');waiting=Number((await blocker.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM projects%FOR UPDATE%';",[pg.database])).rows[0].n);if(waiting===2)break;await new Promise(r=>setTimeout(r,10));}
@@ -480,6 +485,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
     const before=(await admin.query('SELECT * FROM control_loop_improvement_commands')).rows;
     for(const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
       assert.equal((await admin.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
+    await admin.query(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
     await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
     await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
     const schemaBefore=await readPrivateWebSchemaDigest(admin);
@@ -490,6 +496,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
     assert.equal(await readPrivateWebSchemaDigest(admin),schemaBefore,'named refusal leaves the entire pre-down schema intact');
     await admin.query(await readFile('db/migrations/0307_control_loop_policy_validate.sql','utf8'));
     await admin.query(await readFile('db/migrations/0310_control_loop_policy_enforcement.sql','utf8'));
+    await admin.query(await readFile('db/migrations/0311_control_loop_paid_admission.sql','utf8'));
     assert.equal(await readPrivateWebSchemaDigest(admin),privateWebSchemaDigest,'re-validating P71 restores its release pin after refusal');
     console.log('P71 retained_commands=1 named_down_refusal=23514 rows_unchanged=true schema_unchanged=true P71_pin_restored=true');
   }finally{await admin.end();await w.close();}
@@ -503,6 +510,7 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     assert.equal(await validated(),true,'fresh production migration validates the command predicate');
     await admin.query(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
     await admin.query(await readFile('db/down/0308_control_loop_providers.sql','utf8'));
+    await admin.query(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
     await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
     await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
     assert.equal(await validated(),false,'validation down restores NOT VALID while preserving the predicate');
@@ -510,7 +518,7 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     assert.equal(await validated(),true,'0306 down restores the validated pre-P71 predicate');
     // The release pin shipped immediately before P71 (7cc303ebc).
     assert.equal(await readPrivateWebSchemaDigest(admin),'8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c');
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     for(const entry of await collectLedgerEntries(resolve('.'))){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
     await mkdir(join(stage,'db/setup'),{recursive:true});await writeFile(join(stage,'db/setup/production_migration_ledger.sql'),await readFile('db/setup/production_migration_ledger.sql'));
@@ -539,11 +547,12 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
 test('P71 PostgreSQL previous-release signed rows survive production upgrade and legacy Start',async()=>run(async pg=>{
   await sql(pg,await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0308_control_loop_providers.sql','utf8'),[],'migrator');
+  await sql(pg,await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0306_control_loop_policy.sql','utf8'),[],'migrator');
-  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
-  await seed(pg);const e=engine(),w=web(pg,e.adapter);
+  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/roles/%'");
+  await seed(pg,pg.database,false);const e=engine(),w=web(pg,e.adapter);
   try{
     const description='Retained pre-policy input.';
     const draft=await w.desk.saveLoopDraft(identity,project,{description,settingsText},'p71-legacy-draft-0001');
@@ -563,11 +572,12 @@ test('P71 PostgreSQL previous-release signed rows survive production upgrade and
         CONTROL_ROOM_SCHEDULER_PASSWORD:pg.connection('scheduler').password,CONTROL_ROOM_WORK_INTAKE_PASSWORD:pg.connection('control_room_work_intake_agent').password}});
     const roleSql=await readFile('db/roles/private_web_roles.sql','utf8');
     await sql(pg,'BEGIN;'+roleSql.slice(roleSql.indexOf('-- P71:')));
+    await seedS4ProviderV1({query:async(query,params)=>sql(pg,query,params)},scope);
     assert.deepEqual(await saved(),before,'no backfill rewrites prior signed rows');
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,0,'missing source stays legacy, never an inferred waiver');
     assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest);
     await w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:0,settings:'{"fixture":"FUTURE_ONLY"}'},'p71-legacy-future-layer-0001');
-    const started=await w.bridge.mutate(identity,project,requestId,'start',{expectedVersion:1,expectedRevision:2,runLinkId:link.runLink.runLinkId},'p71-legacy-start-0001');
+    const started=await w.bridge.mutate(identity,project,requestId,'start',{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:2,runLinkId:link.runLink.runLinkId},'p71-legacy-start-0001');
     assert.equal(started.state,'accepted');assert.deepEqual(await saved(),before);
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,0);
     console.log('P71 production_upgrade=true prior_signed_rows=unchanged legacy_sources=0 legacy_Start=accepted later_layers=future_only');
@@ -593,8 +603,8 @@ test(`P71 PostgreSQL distinct-owner intake versus PUT waits at the initial proje
     const intakeAdapter={...e.adapter,checkSettings:async()=>{intakeChecked();await intakeGate;return{eligible:true,reasons:[]};}};
     const writerAdapter={...e.adapter,checkSettings:async()=>{putChecked();await putGate;return{eligible:true,reasons:[]};}};
     const reader=web(pg,intakeAdapter),writer=web(pg,writerAdapter),blocker=new Client(pg.admin());await blocker.connect();
-    const bridge=new ImproveControlRoomLoopServiceV1(traced(reader.client),scope,{integrityKey:KEY,adapter:intakeAdapter});
-    const policy=new LoopPolicyServiceV1(traced(writer.client),scope,writerAdapter);
+    const bridge=new ImproveControlRoomLoopServiceV1(traced(reader.client),scope,{providers:s4ProviderServiceV1(traced(reader.client),scope,undefined),integrityKey:KEY,adapter:intakeAdapter});
+    const policy=new LoopPolicyServiceV1(traced(writer.client),scope,writerAdapter,Date.now,s4ProviderServiceV1(traced(writer.client),scope));
     let pending:PromiseSettledResult<unknown>[]=[];
     try{
       const before=Number((await blocker.query('SELECT deadlocks FROM pg_stat_database WHERE datname=$1',[pg.database])).rows[0].deadlocks);
@@ -709,7 +719,7 @@ test('P72 PostgreSQL one waiver 24 checked intakes one consumption source input 
   const clients=Array.from({length:24},()=>{
     const w=pgPolicy(pg,adapter,identity,traced);
     const db:DatabaseClient={query:w.client.query.bind(w.client),transaction:fn=>w.client.transaction(tx=>fn(traced(tx))),transactionWithPreCommitCheck:(fn,check)=>w.client.transactionWithPreCommitCheck(tx=>fn(traced(tx)),check)};
-    return {...w,bridge:new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:KEY,adapter})};
+    return {...w,bridge:new ImproveControlRoomLoopServiceV1(db,scope,{providers:s4ProviderServiceV1(db,scope,undefined),integrityKey:KEY,adapter})};
   });
   try{
     const results=await Promise.allSettled(clients.map((w,i)=>w.bridge.mutate(identity,project,null,'intake',
@@ -751,7 +761,7 @@ test(`P72 PostgreSQL lock PUT versus waiver intake current locks and project wai
   }});
   const db:DatabaseClient={query:reader.client.query.bind(reader.client),transaction:fn=>reader.client.transaction(tx=>fn(wrap(tx))),transactionWithPreCommitCheck:(fn,check)=>reader.client.transactionWithPreCommitCheck(tx=>fn(wrap(tx)),check)};
   const adapter={...e.adapter,checkSettings:async()=>{checked();await gate;return{eligible:true,reasons:[]};}};
-  const bridge=new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:KEY,adapter});
+  const bridge=new ImproveControlRoomLoopServiceV1(db,scope,{providers:s4ProviderServiceV1(db,scope,undefined),integrityKey:KEY,adapter});
   let intake:Promise<unknown>|undefined,put:Promise<unknown>|undefined;
   try{
     intake=bridge.mutate(other,project,null,'intake',{description:'Raced exception',settingsEdits:'{"locked":"changed","other":"changed"}',waiverId},`p72-race-intake-${order}`);
@@ -783,6 +793,7 @@ test('P72 PostgreSQL empty down re-up and injected migration failure leave prior
     await admin.connect();
     const up='db/migrations/0310_control_loop_policy_enforcement.sql';
     const after=await readPrivateWebSchemaDigest(admin);
+    await admin.query(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
     await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
     const before=await readPrivateWebSchemaDigest(admin);
     assert.equal(before,'fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f');
@@ -790,7 +801,7 @@ test('P72 PostgreSQL empty down re-up and injected migration failure leave prior
     assert.deepEqual((await admin.query("SELECT attname FROM pg_attribute WHERE attrelid='control_loop_policy_layers'::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege('control_room_web',attrelid,attnum,'UPDATE') ORDER BY attname COLLATE \"C\"")).rows.map(row=>row.attname),
       ['last_idempotency_key','last_request_digest','settings_sha256','settings_text','updated_at','updated_by','version']);
     for(const privilege of ['SELECT','INSERT'])assert.equal((await admin.query('SELECT has_table_privilege($1,$2,$3) yes',['control_room_web','control_loop_policy_layers',privilege])).rows[0].yes,true);
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/roles/%'");
     const ledgerBefore=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     const files=execFileSync('git',['ls-files','db/'],{encoding:'utf8'}).trim().split('\n');
     for(const file of [...files,up]){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),await readFile(file));}
@@ -821,10 +832,10 @@ test(`P72 PostgreSQL Start revoke serialization and admission winner: ${order}`,
     let s=await w.bridge.status(identity,project,intake.requestId);
     await w.bridge.mutate(identity,project,intake.requestId,'confirm',{expectedVersion:1,expectedRevision:s.engine.revision,requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},'p72-start-order-confirm-0001');
     s=await w.bridge.status(identity,project,intake.requestId);
-    const startBody={expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
+    const startBody={route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
     if(order==='start-first'){
       const adapter={...e.adapter,start:async(...args:Parameters<LoopAdapterV1['start']>)=>{held();await hold;return e.adapter.start(...args);}};
-      const bridge=new ImproveControlRoomLoopServiceV1(w.client,scope,{integrityKey:KEY,adapter});
+      const bridge=new ImproveControlRoomLoopServiceV1(w.client,scope,{providers:s4ProviderServiceV1(w.client,scope,undefined),integrityKey:KEY,adapter});
       const starting=bridge.mutate(identity,project,intake.requestId,'start',startBody,'p72-start-order-start-0001');
       const observed=Promise.allSettled([starting]);await ready;
       assert.equal((await sql(pg,"SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0].n,1);
@@ -838,7 +849,7 @@ test(`P72 PostgreSQL Start revoke serialization and admission winner: ${order}`,
         return value;
       }});
       const db:DatabaseClient={query:revoker.client.query.bind(revoker.client),transaction:fn=>revoker.client.transaction(tx=>fn(wrap(tx))),transactionWithPreCommitCheck:(fn,check)=>revoker.client.transactionWithPreCommitCheck(tx=>fn(wrap(tx)),check)};
-      const policy=new LoopPolicyServiceV1(db,scope,e.adapter);
+      const policy=new LoopPolicyServiceV1(db,scope,e.adapter,Date.now,s4ProviderServiceV1(db,scope));
       const revoking=policy.revokeWaiver(other,project,waiver.id);const observedRevoke=Promise.allSettled([revoking]);await ready;
       const starting=w.bridge.mutate(identity,project,intake.requestId,'start',startBody,'p72-start-order-start-0001');
       const observedStart=Promise.allSettled([starting]);
@@ -868,7 +879,7 @@ test('P72 PostgreSQL dropped connection after consumption rolls back then retry 
       return value;
     }});
     const db:DatabaseClient={query:w.client.query.bind(w.client),transaction:fn=>w.client.transaction(tx=>fn(wrap(tx))),transactionWithPreCommitCheck:(fn,check)=>w.client.transactionWithPreCommitCheck(tx=>fn(wrap(tx)),check)};
-    const b=new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:KEY,adapter:e.adapter});
+    const b=new ImproveControlRoomLoopServiceV1(db,scope,{providers:s4ProviderServiceV1(db,scope,undefined),integrityKey:KEY,adapter:e.adapter});
     await assert.rejects(b.mutate(identity,project,null,'intake',{description:'Interrupted exception',settingsEdits:'{"fixture":"exception"}',waiverId},'p72-drop-intake-0001'));
     assert.equal(terminated,true);
     assert.equal((await sql(pg,'SELECT consumed_by_request_id FROM control_loop_policy_waivers WHERE id=$1',[waiverId])).rows[0].consumed_by_request_id,null);
@@ -883,4 +894,109 @@ test('P72 PostgreSQL dropped connection after consumption rolls back then retry 
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,1);
     console.log('P72 dropped_connection consumed_rollback=true partial_rows=0 retry_sources=1 replay=true');
   }finally{await retry.close();}
+}));
+
+test('S4 native admission pins and migration preserve signed history and reject malformed SQL',async()=>run(async pg=>{
+ await seed(pg);const e=engine(true),{w,id,s}=await confirmed(pg,e);
+ let app:ReturnType<typeof createMacLocalWebProcessV1>|undefined;
+ const rosterRoot=await mkdtemp(resolve('.test-tmp/s4-native-roster-'));
+ try{
+  assert.deepEqual((await w.client.query('SELECT current_user,session_user')).rows,[{current_user:'control_room_web',session_user:'control_room_web'}]);
+  const rows=()=>sql(pg,'SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind');
+  const history=(await rows()).rows;
+  const down=await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'),up=await readFile('db/migrations/0311_control_loop_paid_admission.sql','utf8');
+  await sql(pg,down,[],'migrator');const previous=await readPrivateWebSchemaDigest(w.client);
+  await assert.rejects(sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nSELECT 1/0;COMMIT;`,[],'migrator'),{code:'22012'});
+  assert.equal(await readPrivateWebSchemaDigest(w.client),previous,'failed upgrade rolls back both CHECK replacements');
+  assert.deepEqual((await rows()).rows,history,'failed upgrade retains signed bytes');
+  await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nCOMMIT;`,[],'migrator');
+  const digest=await readPrivateWebSchemaDigest(w.client);
+  assert.equal(digest,privateWebSchemaDigest);
+  assert.equal(digest,digestReleaseSchemaRowsV1((await w.client.query(await readFile('src/updater/v1/pg/release-schema-digest.sql','utf8'))).rows));
+  assert.deepEqual((await rows()).rows,history,'successful upgrade retains signed bytes');
+  await sql(pg,"UPDATE control_loop_providers SET billing_kind='token' WHERE provider_id=$1",[S4_FIXTURE_ROUTE.providerId]);
+  await sql(pg,`INSERT INTO control_loop_provider_prices(tenant_id,provider_id,model,window_key,"window",input_nano_usd_per_token,output_nano_usd_per_token,currency,status,reason,checked_at)
+   VALUES($1,$2,'served/fixture','all',NULL,'2','3','USD','known','',now())`,[scope.tenantId,S4_FIXTURE_ROUTE.providerId]);
+  const body={route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId,paid:{optIn:true,capNanoUsd:'100'}};
+  const localOrigin='http://127.0.0.1:60779',ownerCode='SYNTHETIC-s4-owner-code-000001';
+  app=createMacLocalWebProcessV1({origin:localOrigin,workspaceId:scope.workspaceId,database:{client:w.client,isAvailable:()=>true,close:async()=>{}},
+   localOwnerSession:{schema:LOCAL_OWNER_SESSION_PROFILE_V1,origin:localOrigin,tenantId:scope.tenantId,provider:'test',subject:owner,ownerCodeDigest:sha256Digest({ownerCode}),sessionSeconds:900},
+   loopBridge:{integrityKey:KEY,adapter:{...e.adapter,roster:{rosterRoot,toolsSeed:join(rosterRoot,'unused-seed.tsv'),check:async()=>{throw new Error('recorded roster check is not used by admission');}}}}});
+  const signIn=await app.handle(new Request(localOrigin+'/api/v1/local-owner-session',{method:'POST',headers:{origin:localOrigin,'content-type':'application/json'},body:JSON.stringify({ownerCode})}),()=>new Response('unused'));
+  assert.equal(signIn.status,201);const cookie=signIn.headers.get('set-cookie')!;
+  const response=await app.handle(new Request(`${localOrigin}/api/v1/projects/${encodeURIComponent(project)}/improvements/loop/${encodeURIComponent(id)}/start`,{
+   method:'POST',headers:{origin:localOrigin,cookie,'content-type':'application/json','idempotency-key':'s4-native-paid-000001'},body:JSON.stringify(body)}),()=>new Response('unused'));
+  assert.equal(response.status,202);const result=await response.json();assert.equal(result.state,'accepted');
+  const claims=(await sql(pg,"SELECT * FROM control_loop_improvement_commands WHERE operation='start' ORDER BY entry_kind")).rows;
+  assert.equal(claims.length,2);
+  const checkedAt=(await w.client.query<{checked_at:Date}>('SELECT checked_at FROM control_loop_provider_prices WHERE tenant_id=$1 AND provider_id=$2',[scope.tenantId,S4_FIXTURE_ROUTE.providerId])).rows[0]!.checked_at;
+  const {providerPriceDigestV1}=await import('../src/web/v1/loop-provider-prices');
+  const expectedPin={...S4_FIXTURE_ROUTE,servedModelId:'served/fixture',providerVersion:1,capNanoUsd:'100',
+   priceRowDigest:providerPriceDigestV1({providerId:S4_FIXTURE_ROUTE.providerId,model:'served/fixture',windowKey:'all',window:null,input:'2',output:'3',currency:'USD',status:'known',reason:'',checkedAt:checkedAt.toISOString()})};
+  for(const row of claims)assert.deepEqual(row.binding.paidPin,expectedPin,'each native claim/result keeps the complete service-derived pin');
+  for(const row of claims){assert.equal(row.binding.paidPin.servedModelId,'served/fixture');assert.equal(row.binding.paidPin.providerVersion,1);assert.equal(row.binding.paidPin.capNanoUsd,'100');assert.equal(row.binding.paidPin.providerId,S4_FIXTURE_ROUTE.providerId);}
+  const binding=claims[0].binding;
+  const mutations=[{...binding,unknown:true},{...binding,paidPin:null},{...binding,paidPin:{...binding.paidPin,servedModelId:null}},
+   {...binding,paidPin:{...binding.paidPin,capNanoUsd:'101'}},{...binding,body:{...body,route:null}},
+   {...binding,body:{...body,route:{...S4_FIXTURE_ROUTE,unknown:true}}},{...binding,body:{...body,paid:{optIn:false,capNanoUsd:'100'}}}];
+  const {route:_,...noRoute}=body;mutations.push({...binding,body:noRoute});
+  for(const mutated of mutations){
+   const row={...claims[0],command_id:`loop-command:${randomBytes(16).toString('hex')}`,idempotency_key:`s4-native-bad-${randomBytes(8).toString('hex')}`,binding:mutated};
+   const columns=Object.keys(row),values=Object.values(row).map(value=>value&&typeof value==='object'&&!(value instanceof Date)?JSON.stringify(value):value);
+   await assert.rejects(sql(pg,`INSERT INTO control_loop_improvement_commands(${columns.join(',')}) VALUES(${columns.map((_,i)=>'$'+(i+1)).join(',')})`,values,'web'),{code:'23514'});
+  }
+  const retained=(await rows()).rows;
+  await assert.rejects(sql(pg,down,[],'migrator'),{code:'23514',message:'loop paid admission retained'});
+  assert.deepEqual((await rows()).rows,retained);assert.equal(await readPrivateWebSchemaDigest(w.client),digest);
+  assert.equal((await w.bridge.mutate(identity,project,id,'start',body,'s4-native-paid-000001')).replayed,true);
+  await assert.rejects(w.bridge.mutate(identity,project,id,'start',{...body,paid:{optIn:true,capNanoUsd:'101'}},'s4-native-paid-000001'),{code:'conflict'});
+  console.log('S4 native login=production entrypoint=authenticated-Mac-local-handler CHECK vectors=8 signed-history=unchanged failed-upgrade=atomic retained-down=refused paid-stand-in=accepted replay=exact readiness=native-disabled');
+ }finally{await app?.close();await w.close();await rm(rosterRoot,{recursive:true,force:true});}
+}));
+
+test('S4 native legacy route-less signed Start survives upgrade replay sweep and Stop',async()=>run(async pg=>{
+ await seed(pg);const e=engine(),{w,id,s}=await confirmed(pg,e);
+ try{
+  const down=await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'),up=await readFile('db/migrations/0311_control_loop_paid_admission.sql','utf8');
+  await sql(pg,down,[],'migrator');
+  const confirm=(await w.client.query<{binding:LoopBridgeBindingV1}>("SELECT binding FROM control_loop_improvement_commands WHERE operation='confirm' AND entry_kind='claim'")).rows[0]!.binding;
+  const authorization=(await w.client.query<{id:string}>('SELECT id FROM control_loop_improvement_authorizations')).rows[0]!.id;
+  const body={expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
+  const binding={...confirm,body,authorizationId:authorization,expectedRevision:s.engine.revision};
+  const commandId=`loop-command:${randomBytes(16).toString('hex')}`,key='s4-native-legacy-start-0001';
+  // Seal the predecessor's fifteen-key binding under its actual CHECKs. This
+  // fixture adapter records execution only; it never invokes a provider.
+  const insert=async(entry_kind:'claim'|'result',result:unknown)=>{
+   const material={tenant_id:scope.tenantId,command_id:commandId,entry_kind,request_id:id,project_id:project,owner_identity_id:owner,
+    operation:'start',idempotency_key:key,binding,result,created_at:new Date().toISOString()};
+   const row={...material,record_digest:sha256Digest(material),auth_tag:hmacSha256Tag(KEY,{purpose:'loop-improvement-command/v1',record:material})};
+   const columns=Object.keys(row),values=Object.values(row).map(value=>value&&typeof value==='object'?JSON.stringify(value):value);
+   await w.client.query(`INSERT INTO control_loop_improvement_commands(${columns.join(',')}) VALUES(${columns.map((_,i)=>'$'+(i+1)).join(',')})`,values);
+  };
+  await insert('claim',null);
+  const observed=await e.adapter.start(commandId,binding,()=>{});
+  await insert('result',{state:'accepted',revision:observed.revision,adapterId:e.adapter.adapterId,loopRunId:binding.loopRunId,
+   toolingRevision:e.adapter.toolingRevision,evidenceDigest:observed.receipts.find(receipt=>receipt.commandId===commandId)!.evidenceDigest,error:null});
+  const rows=()=>sql(pg,'SELECT row_to_json(r)::text bytes FROM control_loop_improvement_commands r ORDER BY command_id,entry_kind');
+  const before=(await rows()).rows;
+  await assert.rejects(sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nSELECT 1/0;COMMIT;`,[],'migrator'),{code:'22012'});
+  assert.deepEqual((await rows()).rows,before);
+  await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nCOMMIT;`,[],'migrator');
+  assert.deepEqual((await rows()).rows,before,'upgrade preserves every legacy signed byte');
+  assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest);
+  const released:string[]=[],adapter={...e.adapter,providerRoutes:undefined,releaseCommandFiles:async(id:string)=>{released.push(id);}};
+  const restarted=new ImproveControlRoomLoopServiceV1(w.client,scope,{integrityKey:KEY,adapter});
+  const replay=await restarted.mutate(identity,project,id,'start',body,key);
+  assert.equal(replay.replayed,true);assert.equal(replay.state,'accepted');
+  assert.equal(e.calls.filter(c=>c.op==='start').length,1,'legacy replay never redispatches');
+  assert.ok(released.includes(commandId),'the signed legacy completed Start is eligible for sweep');
+  assert.deepEqual((await rows()).rows,before,'replay and sweep never rewrite historical bindings');
+  assert.equal((await restarted.status(identity,project,id)).display.canStop,true);
+  await assert.rejects(restarted.mutate(identity,project,id,'start',body,'s4-native-new-route-less-0001'),{code:'invalid_request'});
+  const stop=await restarted.mutate(identity,project,id,'stop',{runLinkId:body.runLinkId},'s4-native-legacy-stop-0001');
+  assert.equal(stop.state,'accepted');assert.equal(e.calls.filter(c=>c.op==='stop').length,1);
+  assert.deepEqual((await sql(pg,'SELECT row_to_json(r)::text bytes FROM control_loop_improvement_commands r WHERE command_id=$1 ORDER BY entry_kind',[commandId])).rows,
+   before.filter(row=>JSON.parse(row.bytes).command_id===commandId));
+  console.log('S4 legacy route-less signature=verified signed-bytes=unchanged failed-upgrade=atomic replay=no-dispatch sweep=verified Stop=accepted new-route-less=refused');
+ }finally{await w.close();}
 }));

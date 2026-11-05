@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -406,7 +407,7 @@ test("B5 SYNTHETIC journey keeps one run through closed sessions and a quiescent
     requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 }, "b5-confirm-00000001");
   assert.deepEqual(f.calls, ["intake", "confirm"], "B5 confirmation alone causes zero Start");
   s = await current(); const runLinkId = desk.loopRequests[0]!.runLink!.runLinkId;
-  const start = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId };
+  const start = {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId };
   await f.bridge.mutate(f.identity, project, requestId, "start", start, "b5-start-0000000001");
   await f.bridge.mutate(f.identity, project, requestId, "start", start, "b5-start-0000000001");
   assert.equal(f.calls.filter(c => c === "start").length, 1, "B5 exact Start retry consumes once");
@@ -473,11 +474,11 @@ test("B5 SYNTHETIC companion refuses stale admission, a second Start and answers
   const confirm = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 };
   await assert.rejects(mutate(requestId, "confirm", { ...confirm, requestSha256: "0".repeat(64) }, "b5-c-confirm-stale1"), /conflict/u, "B5 a changed request is stale at confirmation");
   await assert.rejects(mutate(requestId, "confirm", { ...confirm, settingsSha256: "0".repeat(64) }, "b5-c-confirm-stale2"), /conflict/u, "B5 changed settings are stale at confirmation");
-  await assert.rejects(mutate(requestId, "start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, "b5-c-start-early01"), /conflict/u,
+  await assert.rejects(mutate(requestId, "start", {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, "b5-c-start-early01"), /conflict/u,
     "B5 Start before the exact confirmation is refused");
   assert.equal(f.calls.filter(c => c === "start" || c === "confirm").length, 0, "B5 refused admissions reach no engine command");
   await mutate(requestId, "confirm", confirm, "b5-c-confirm-00001"); s = await current();
-  const start = { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId };
+  const start = {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId };
   await mutate(requestId, "start", start, "b5-c-start-000001");
   await assert.rejects(mutate(requestId, "start", start, "b5-c-start-000002"), /conflict/u, "B5 a second Start under another key is refused");
   await mutate(requestId, "start", start, "b5-c-start-000001"); // the reply was lost; the exact retry replays

@@ -854,6 +854,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     try { baselineDigest = await readPrivateWebSchemaDigest(reference); baselineGrants = [...await readMacGrantCatalogV1(reference)].sort(); }
     finally { await reference.end(); }
     // Remove empty dependents in reverse ledger order before proving the older down.
+    await b1aSql(pg, await readFile("db/down/0311_control_loop_paid_admission.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0310_control_loop_policy_enforcement.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0309_control_loop_provider_prices.sql", "utf8"), [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/down/0308_control_loop_providers.sql", "utf8"), [], pg.database, "migrator");
@@ -880,6 +881,7 @@ test("B1a rollback empty round-trip and retained-row refusal", async () => b1aRu
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0308_control_loop_providers.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0309_control_loop_provider_prices.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0310_control_loop_policy_enforcement.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
+    await b1aSql(pg, `BEGIN; SET LOCAL ROLE control_room_schema_owner; ${await readFile("db/migrations/0311_control_loop_paid_admission.sql", "utf8")}\nCOMMIT;`, [], pg.database, "migrator");
     await b1aSql(pg, await readFile("db/roles/production_table_grants.sql", "utf8"), [], pg.database, "migrator");
     await applyB1aRoles(pg, resolve("."), pg.database);
     const f = await b1aLinked(pg), web = b1aWeb(pg);

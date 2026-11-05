@@ -374,7 +374,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers:loopProviders }, clock) : undefined;
   // B6: the roster master and its export. Start seeds or reconciles once; requests wait for it.
   const loopRosterTools = options.loopBridge?.adapter.roster;
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(options.database.client,

@@ -16,13 +16,13 @@ export async function monitoringEngine(t: TestContext) {
   const traces=async()=>{try{return(await readFile(join(e.root,'health-trace.jsonl'),'utf8')).trim().split('\n').map(s=>JSON.parse(s)) as {argv:string[];env:Record<string,string>;pid:number}[];}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;}};
   const behavior=(value:object)=>writeFile(join(e.root,'health-behavior.json'),JSON.stringify(value));
   const raw=createImproveControlRoomLoopAdapterV1(configuration);t.after(()=>raw.close());
-  const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string)=>{
-    const status=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):raw[op](id,b,fence));
+  const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string,settings?:string,admission?:import('../../src/web/v1/improve-control-room-loop-adapter').LoopStartAdmissionV1)=>{
+    const status=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):op==='start'?raw.start(id,b,fence,settings,admission):raw[op](id,b,fence));
     if(['confirm','start','approve'].includes(op))await raw.releaseCommandFiles!(id);
     status.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id,op})});
     await e.edit(b.loopRunId,status);return status;
   };
-  const adapter:LoopAdapterV1={...raw,intake:(id,b,text,f)=>apply('intake',id,b,f,text),confirmRequest:(id,b,f)=>apply('confirm',id,b,f),start:(id,b,f)=>apply('start',id,b,f),stop:(id,b,f)=>apply('stop',id,b,f),approve:(id,b,f)=>apply('approve',id,b,f),answer:(id,b,text,f)=>apply('answer',id,b,f,text)};
+  const adapter:LoopAdapterV1={...raw,intake:(id,b,text,f)=>apply('intake',id,b,f,text),confirmRequest:(id,b,f)=>apply('confirm',id,b,f),start:(id,b,f,settings,admission)=>apply('start',id,b,f,undefined,settings,admission),stop:(id,b,f)=>apply('stop',id,b,f),approve:(id,b,f)=>apply('approve',id,b,f),answer:(id,b,text,f)=>apply('answer',id,b,f,text)};
   return {...e,raw,adapter,configuration,healthTraces:traces,behavior};
 }
 export async function until(check:()=>Promise<boolean>,ms=4000){

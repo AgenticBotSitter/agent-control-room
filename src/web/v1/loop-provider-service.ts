@@ -196,6 +196,34 @@ export class LoopProviderServiceV1 {
     // Keychain references designate direct token API routes; subscription launcher credentials remain launcher-owned.
     if(p.secret_ref.kind==='macos_keychain'&&p.billing_kind!=='token') throw new LoopProviderRefusedV1('roster_mismatch');
   }
+  /** Admission owns the transaction and authority. Lock the configuration and roster
+   * until its claim commits; price refresh/edit uses the same provider-state mutex. */
+  async resolveStartMappingV1(tx: DatabaseSession, route: unknown) {
+    const parsed=loopProviderRouteSchemaV1.safeParse(route);
+    if (!parsed.success) throw new WebAccessError('invalid_request');
+    await tx.query('SELECT version FROM control_loop_provider_state WHERE tenant_id=$1 FOR SHARE',[this.scope.tenantId]);
+    const {snapshot}=await this.#read(tx);
+    const p=snapshot.providers.find(p=>p.provider_id===parsed.data.providerId),m=p?.models.find(m=>m.roster_name===parsed.data.model);
+    if (!p || !m) throw new WebAccessError('conflict');
+    try { await this.#roster(tx,p); } catch { throw new WebAccessError('conflict'); }
+    const roster=(await tx.query<{on_off:string}>('SELECT on_off FROM control_loop_roster_models WHERE tenant_id=$1 AND name=$2 FOR SHARE',[this.scope.tenantId,parsed.data.model])).rows[0];
+    if (roster?.on_off !== 'on') throw new WebAccessError('conflict');
+    if (p.secret_ref.kind === 'bitwarden') throw new LoopProviderRefusedV1('secret_missing');
+    const view=await this.#priceView(tx);
+    const row=priceAtV1(view.prices.filter(row=>row.providerId===p.provider_id && row.model===m.served_model_id),this.clock());
+    const price=row ? {...row,stale:this.clock()-Date.parse(row.checkedAt)>24*3600_000,digest:providerPriceDigestV1(row)} : null;
+    return {launcher:m.launcher,servedModelId:m.served_model_id,billingKind:p.billing_kind,version:snapshot.version,price,secretRef:p.secret_ref};
+  }
+  /** Probes only presence after its authenticated snapshot transaction closes. */
+  async preflightStartMappingV1(identity: VerifiedWebIdentity, route: {providerId:string;model:string}) {
+    const mapping=await this.#authority.authenticated(identity,async(tx,actor)=>{
+      actor.require('providers.read',undefined,true);
+      return this.resolveStartMappingV1(tx,route);
+    });
+    if (mapping.secretRef.kind === 'macos_keychain' && await this.presence.availability(route.providerId) !== 'available')
+      throw new LoopProviderRefusedV1('secret_missing');
+    return mapping;
+  }
   async revalidate(identity:VerifiedWebIdentity,route:unknown) {
     const parsed=loopProviderRouteSchemaV1.safeParse(route);if(!parsed.success)throw new WebAccessError('invalid_request');
     return this.#authority.authenticated(identity,async(tx,actor)=>{

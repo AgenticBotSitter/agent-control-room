@@ -1,3 +1,24 @@
+import { LoopProviderServiceV1 } from '../../src/web/v1/loop-provider-service';
+import { taskFixture } from './web-task';
+export const S4_FIXTURE_ROUTE={providerId:'provider-fixture',model:'fixture-model'};
+export function s4ProviderServiceV1(db:import('../../src/persistence/database').DatabaseClient,scope:{tenantId:string;workspaceId:string},clock:()=>number=Date.now){
+ return new LoopProviderServiceV1(db,scope,{availability:async()=>{throw new Error('fixture must not probe a credential');}},clock);
+}
+export async function seedS4ProviderV1(db:Pick<import('../../src/persistence/database').DatabaseClient,'query'>,scope:{tenantId:string}){
+ const at='2026-10-01T00:00:00.000Z';
+ await db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+ VALUES($1,'fixture-model',999,'codex','fixture','fixture','frontier','build','high','high','sub','on','','','','identity:fixture',$2) ON CONFLICT DO NOTHING`,[scope.tenantId,at]);
+ await db.query(`INSERT INTO control_loop_providers(tenant_id,provider_id,display_name,base_url,billing_kind,secret_ref,credit_note,updated_by,updated_at)
+ VALUES($1,'provider-fixture','Synthetic subscription','https://example.com','subscription','{"kind":"launcher","launcher":"codex"}'::jsonb,'','identity:fixture',$2) ON CONFLICT DO NOTHING`,[scope.tenantId,at]);
+ await db.query(`INSERT INTO control_loop_provider_models(tenant_id,provider_id,roster_name,launcher,served_model_id)
+ VALUES($1,'provider-fixture','fixture-model','codex','served/fixture') ON CONFLICT DO NOTHING`,[scope.tenantId]);
+ await db.query(`INSERT INTO control_loop_provider_state(tenant_id,version,updated_at) VALUES($1,1,$2) ON CONFLICT DO NOTHING`,[scope.tenantId,at]);
+}
+export async function s4TaskFixture(...args:Parameters<typeof taskFixture>){
+ const f=await taskFixture(...args);await seedS4ProviderV1(f.client,{tenantId:'tenant:web'});return f;
+}
+export const s4FixtureRoutes={paidExecutionReady:false,resolveStartRoute:async()=>({...S4_FIXTURE_ROUTE,additionalRoutes:[]})};
+export const s4FixtureContractRoutes={schemaVersion:1 as const,resolveStartRoute:s4FixtureRoutes.resolveStartRoute};
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -10,7 +31,7 @@ import { createImproveControlRoomLoopAdapterV1, loopByteHashV1, loopEngineStatus
 import { ImproveControlRoomLoopServiceV1 } from "../../src/web/v1/improve-control-room-loop-service";
 import { sha256Digest } from "../../src/security";
 export const recoveryKey = new Uint8Array(32).fill(73);
-export const syntheticSettings = JSON.stringify({project:{host_adapter:"local-loop"},fixture:"SYNTHETIC"});
+export const syntheticSettings = JSON.stringify({project:{host_adapter:"local-loop"},fixture:"SYNTHETIC",providerRoute:S4_FIXTURE_ROUTE});
 // A persistent test engine. No agents, credentials, model or network calls.
 const cli = `import os,sys,json,hashlib,time,signal
 root=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -74,7 +95,7 @@ print(json.dumps(dict(eligible=True,reasons=[])))
     entrypoint:join(root,'bridge/engine.py'),entrypointSha256:loopByteHashV1(cli),toolingManifest:join(root,'tooling.json'),configRoot:root,
     runRoot:join(root,'runs'),workRoot:join(root,'work'),cwd:root,settingsFile:join(root,'settings.json'),availabilityFile:join(root,'availability.json'),
     settingsSha256:loopByteHashV1(syntheticSettings),availabilitySha256:loopByteHashV1('{}'),executionIdentity:{uid:process.getuid!(),isolationEvidenceDigest:sha256Digest('SYNTHETIC isolation')},
-    contract:{lineage,schemaDigest:sha256Digest('SYNTHETIC recovery schema'),generateRunId:()=>`fixture-run-${randomBytes(16).toString('hex')}`,
+    contract:{lineage,providerRoutes:s4FixtureContractRoutes,schemaDigest:sha256Digest('SYNTHETIC recovery schema'),generateRunId:()=>`fixture-run-${randomBytes(16).toString('hex')}`,
       qualifiedOperations:['intake','confirm','start','stop','approve','answer'],decodeStatus:(v:unknown)=>{
         const e=v as {run:string;counters:{fixture:object}};
         return loopEngineStatusSchemaV1.parse({...e.counters.fixture,run:{adapterId:'adapter:synthetic',loopRunId:e.run,toolingRevision,a2SchemaVersion:1}});
@@ -83,20 +104,21 @@ print(json.dumps(dict(eligible=True,reasons=[])))
       // separately proves engine compare-and-admit through its unwrapped adapter.
       admissionExpectation:()=>({fixture:"SYNTHETIC recovery"})}};
   const raw=createImproveControlRoomLoopAdapterV1(configuration);t.after(()=>raw.close());
-  const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string)=>{
-    const s=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):raw[op](id,b,fence));
+  const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string,settings?:string,admission?:import('../../src/web/v1/improve-control-room-loop-adapter').LoopStartAdmissionV1)=>{
+    const s=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):op==='start'?raw.start(id,b,fence,settings,admission):raw[op](id,b,fence));
     // These operations formerly created no fixture command files. Recovery
     // tests seed retained files explicitly; discard only new pin-only scratch.
     if(['confirm','start','approve'].includes(op))await raw.releaseCommandFiles!(id);
     s.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id,op})});
     await edit(b.loopRunId,s);return s;
   };
-  const adapter:LoopAdapterV1={...raw,intake:(id,b,text,f)=>apply('intake',id,b,f,text),confirmRequest:(id,b,f)=>apply('confirm',id,b,f),start:(id,b,f)=>apply('start',id,b,f),stop:(id,b,f)=>apply('stop',id,b,f),approve:(id,b,f)=>apply('approve',id,b,f),answer:(id,b,text,f)=>apply('answer',id,b,f,text)};
+  const adapter:LoopAdapterV1={...raw,intake:(id,b,text,f)=>apply('intake',id,b,f,text),confirmRequest:(id,b,f)=>apply('confirm',id,b,f),start:(id,b,f,settings,admission)=>apply('start',id,b,f,undefined,settings,admission),stop:(id,b,f)=>apply('stop',id,b,f),approve:(id,b,f)=>apply('approve',id,b,f),answer:(id,b,text,f)=>apply('answer',id,b,f,text)};
   const traces=async()=>{try{return(await readFile(join(root,'trace.jsonl'),'utf8')).trim().split('\n').map(s=>JSON.parse(s)) as {op:string;run:string;args:string[];pid:number}[];}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return[];throw e;}};
   return{root,configuration,adapter,raw,edit,traces};
 }
 export async function seedRecoveryRun(f:{db:import('../../src/persistence/database').DatabaseClient;scope:{tenantId:string;workspaceId:string};identity:import('../../src/web/v1/access-verifier').VerifiedWebIdentity},
   engine:Awaited<ReturnType<typeof syntheticRecoveryEngine>>,projectId:string,clock:()=>number,key='b3a-seed',pendingStart=false,existingBridge?:ImproveControlRoomLoopServiceV1){
+  await seedS4ProviderV1(f.db,f.scope);
   const presentation=(await f.db.query<{template_id:string}>(`SELECT payload->'presentation'->>'templateId' AS template_id FROM projects WHERE id=$1`,[projectId])).rows[0]?.template_id;
   if(presentation!=='control-room')await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`,[projectId]);
   const wrap=(tx:import('../../src/persistence/database').DatabaseSession):import('../../src/persistence/database').DatabaseSession=>({query:(sql,params)=>{
@@ -104,12 +126,12 @@ export async function seedRecoveryRun(f:{db:import('../../src/persistence/databa
     return tx.query(sql,params);
   }});
   const database:import('../../src/persistence/database').DatabaseClient=pendingStart?{query:f.db.query.bind(f.db),transaction:work=>f.db.transaction(tx=>work(wrap(tx))),transactionWithPreCommitCheck:(work,check)=>f.db.transactionWithPreCommitCheck(tx=>work(wrap(tx)),check)}:f.db;
-  const bridge=existingBridge??new ImproveControlRoomLoopServiceV1(database,f.scope,{integrityKey:recoveryKey,adapter:engine.adapter},clock);
+  const bridge=existingBridge??new ImproveControlRoomLoopServiceV1(database,f.scope,{providers:s4ProviderServiceV1(database,f.scope,clock),integrityKey:recoveryKey,adapter:engine.adapter},clock);
   const intake=await bridge.mutate(f.identity,projectId,null,'intake',{description:'Recover this exact saved SYNTHETIC request.'},key+'-intake-0001');assert.equal(intake.state,'accepted');
   let s=await bridge.status(f.identity,projectId,intake.requestId);
   assert.equal((await bridge.mutate(f.identity,projectId,intake.requestId,'confirm',{expectedVersion:1,expectedRevision:s.engine.revision,requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},key+'-confirm-0001')).state,'accepted');
   s=await bridge.status(f.identity,projectId,intake.requestId);
-  assert.equal((await bridge.mutate(f.identity,projectId,intake.requestId,'start',{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},key+'-start-000001')).state,pendingStart?'uncertain':'accepted');
+  assert.equal((await bridge.mutate(f.identity,projectId,intake.requestId,'start',{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},key+'-start-000001')).state,pendingStart?'uncertain':'accepted');
   return{bridge,id:intake.requestId,run:s.request.runLink!.loopRunId,link:s.request.runLink!.runLinkId};
 }
 
@@ -240,12 +262,13 @@ export async function seedRecoveryPostgres(admin:PoolConfig,identity:VerifiedWeb
       VALUES($1,$2,'human','Fixture identity','test',$3,'active',$4,$4)`,[pgRecoveryOwner,pgRecoveryScope.tenantId,sha256Digest({provider:'test',subject:pgRecoveryOwner}),identity.issuedAt]);
     await client.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
       VALUES('grant:b3a',$1,$2,'owner','["*"]','["*"]','critical',true,false,$3,$3)`,[pgRecoveryScope.tenantId,pgRecoveryOwner,identity.issuedAt]);
+    await seedS4ProviderV1(client,pgRecoveryScope);
   }finally{await client.end();}
 }
 export function recoveryPgWeb(connection:PoolConfig,adapter:LoopAdapterV1){
   const config={host:'127.0.0.1',port:connection.port!,database:connection.database!,username:connection.user!,password:String(connection.password),majorVersion:17 as const};
   const pool=new Pool({...privatePgOptions(config),...connection,max:1}),bound=bindPrivatePgPool(pool);
-  const bridge=new ImproveControlRoomLoopServiceV1(bound.client,pgRecoveryScope,{integrityKey:recoveryKey,adapter});
+  const bridge=new ImproveControlRoomLoopServiceV1(bound.client,pgRecoveryScope,{providers:s4ProviderServiceV1(bound.client,pgRecoveryScope,undefined),integrityKey:recoveryKey,adapter});
   return{...bound,bridge,pool};
 }
 // Child entry for the measured separate-process contention proof. Input arrives

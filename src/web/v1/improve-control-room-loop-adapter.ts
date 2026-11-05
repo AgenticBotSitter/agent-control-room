@@ -111,6 +111,15 @@ export const loopProviderRouteResolutionSchemaV1 = providerSecretInput.pipe(z.ob
   providerId, model: providerText, additionalRoutes: z.array(loopProviderRouteSchemaV1).max(256),
 }).strict());
 export type LoopProviderRouteResolutionV1 = z.infer<typeof loopProviderRouteResolutionSchemaV1>;
+export type LoopStartAdmissionV1 = { settingsSha256:string; routes:LoopProviderRouteResolutionV1; paidPin?:NonNullable<LoopBridgeBindingV1['paidPin']> };
+/** Compare route sets independently of ordering or repeated lineup roles. */
+export function normalizeLoopProviderRoutesV1(value:unknown):LoopProviderRouteResolutionV1 {
+  const result=loopProviderRouteResolutionSchemaV1.parse(value),pairs=new Map<string,LoopProviderRouteV1>();
+  for (const route of result.additionalRoutes) if (route.providerId !== result.providerId || route.model !== result.model)
+    pairs.set(JSON.stringify([route.providerId,route.model]),route);
+  result.additionalRoutes=[...pairs.values()].sort((a,b)=>a.providerId < b.providerId ? -1 : a.providerId > b.providerId ? 1 : a.model < b.model ? -1 : a.model > b.model ? 1 : 0);
+  return result;
+}
 function freezeProviderValue<T>(value: T): T {
   if (value && typeof value === "object") {
     for (const child of Object.values(value)) freezeProviderValue(child);
@@ -251,7 +260,7 @@ export interface LoopAdapterV1 {
   reserveRun(): string; available(operation: LoopBridgeOperationV1): boolean;
   intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
   confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
-  start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string): Promise<LoopEngineStatusV1>;
+  start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string, admission?:LoopStartAdmissionV1): Promise<LoopEngineStatusV1>;
   status(run: string): Promise<LoopEngineStatusV1>;
   readApprovalDocument?(run: string, descriptor: NonNullable<LoopEngineStatusV1["approval"]>): Promise<string>;
   stop(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void): Promise<LoopEngineStatusV1>;
@@ -758,7 +767,19 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     ...(monitor ? { monitoringTick: monitor.tick } : {}),
     intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText) => invoke("intake", id, b, fence, text, settings),
     confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("confirm", id, b, fence, undefined, settings),
-    start: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("start", id, b, fence, undefined, settings), status, readApprovalDocument,
+    start: async (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText, admission?:LoopStartAdmissionV1) => {
+      if (!providerRoutes || !admission || admission.settingsSha256 !== b.settingsSha256 || loopByteHashV1(settings) !== b.settingsSha256)
+        throw unavailable();
+      const actual=await providerRoutes.resolveStartRoute(settings);
+      const route=loopProviderRouteSchemaV1.safeParse(b.body.route);
+      if (!route.success || route.data.providerId !== actual.providerId || route.data.model !== actual.model
+        || canonicalJson(actual) !== canonicalJson(normalizeLoopProviderRoutesV1(admission.routes))
+        || canonicalJson(b.paidPin ?? null) !== canonicalJson(admission.paidPin ?? null)
+        || b.paidPin && (b.paidPin.providerId !== actual.providerId || b.paidPin.model !== actual.model
+          || b.paidPin.capNanoUsd !== (b.body.paid as {capNanoUsd?:string}|undefined)?.capNanoUsd)
+        || b.body.paid && !providerRoutes.paidExecutionReady) throw unavailable();
+      return invoke("start", id, b, fence, undefined, settings);
+    }, status, readApprovalDocument,
     stop: (id: string, b: LoopBridgeBindingV1, fence: () => void) => invoke("stop", id, b, fence),
     approve: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText) => invoke("approve", id, b, fence, undefined, settings),
     answer: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText) => invoke("answer", id, b, fence, text, settings),

@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { z } from "zod";
@@ -26,7 +27,7 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
 
 const KEY = new Uint8Array(32).fill(64);
-const settingsText = JSON.stringify({ project: { host_adapter: "local-loop" }, fixture: "SYNTHETIC" });
+const settingsText = JSON.stringify({ project: { host_adapter: "local-loop" }, fixture: "SYNTHETIC", providerRoute:S4_FIXTURE_ROUTE });
 const description = "Show the exact saved improvement.";
 
 // Explicit SYNTHETIC executable: no worker/agent/provider is invoked. It records
@@ -154,7 +155,7 @@ async function synthetic(t: TestContext) {
     workRoot: join(root, "work"), runRoot: join(root, "runs"), cwd: root, settingsFile: join(root, "settings.json"),
     availabilityFile: join(root, "availability.json"), toolingRevision, settingsSha256: loopByteHashV1(settingsText), availabilitySha256: loopByteHashV1("{}"),
     executionIdentity: { uid: process.getuid!(), isolationEvidenceDigest: `sha256:${"b".repeat(64)}` }, timeoutMs: 1000,
-    contract: { lineage, schemaDigest: `sha256:${"c".repeat(64)}`, generateRunId: () => `fixture-run-${randomBytes(16).toString("hex")}`,
+    contract: { lineage, providerRoutes:s4FixtureContractRoutes, schemaDigest: `sha256:${"c".repeat(64)}`, generateRunId: () => `fixture-run-${randomBytes(16).toString("hex")}`,
       qualifiedOperations: ["intake", "confirm", "start", "stop", "approve", "answer"],
       locateApprovalDocument: () => documentNames,
       decodeApprovalSidecar: (output: unknown) => loopApprovalDescriptorSchemaV1.parse(output),
@@ -215,16 +216,16 @@ async function synthetic(t: TestContext) {
   return { root, adapter, raw, configuration, edit, traces, clearObservations:()=>observations.clear(), setDocumentNames: (names: typeof documentNames) => { documentNames = names; }, setBeforeAdmission: (callback: () => Promise<void>) => { beforeAdmission = callback; } };
 }
 async function fixture(t: TestContext) {
-  const f = await taskFixture(); t.after(() => f.db.close());
+  const f = await s4TaskFixture(); t.after(() => f.db.close());
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const engine = await synthetic(t);
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter: engine.adapter }, () => now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, {providers:s4ProviderServiceV1(f.client,{ tenantId: "tenant:web", workspaceId: "workspace:web" },() => now), integrityKey: KEY, adapter: engine.adapter }, () => now);
   const service = new ImproveControlRoomDeskServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, KEY, undefined, () => now);
   const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, service, clock: () => now, loopBridge: bridge });
   const base = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop`;
   let sequence = 0;
-  const post = (suffix: string, body: unknown, key = `b1b-request-${String(++sequence).padStart(8, "0")}`) => handler(request(`${base}/${suffix}`, "POST", body, key));
+  const post = (suffix: string, body: unknown, key = `b1b-request-${String(++sequence).padStart(8, "0")}`) => handler(request(`${base}/${suffix}`, "POST", suffix.endsWith("/start")?{route:S4_FIXTURE_ROUTE,...body as object}:body, key));
   const get = (id: string) => bridge.status(f.identity, f.project.projectId, id);
   const intake = async () => { const response = await post("intake", { description }); assert.equal(response.status, 202); const receipt = await response.json() as { requestId: string; state: string }; assert.equal(receipt.state, "accepted"); return receipt.requestId; };
   const confirm = async (id: string) => { const s = await get(id); const response = await post(`${encodeURIComponent(id)}/confirm`, { expectedVersion: s.request.currentVersion,
@@ -239,7 +240,7 @@ for (const step of ["1", "intake", "42", null]) test(`B1b intake completion igno
     return { ...status, progress: { ...status.progress, step } };
   } };
   const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" },
-    { integrityKey: KEY, adapter }, () => now);
+    {providers:s4ProviderServiceV1(f.client,{ tenantId: "tenant:web", workspaceId: "workspace:web" },() => now), integrityKey: KEY, adapter }, () => now);
   const result = await bridge.mutate(f.identity, f.project.projectId, null, "intake", { description }, "b1b-display-step-0001");
   assert.equal(result.state, "accepted", "intake admission is independent of display step");
   assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links")).rows.length, 1);
@@ -279,7 +280,7 @@ test("B1b A2 expect pins", async t => {
   const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
   const before=await f.raw.status(run);let savedBefore="",statusReadsAtHook=0;
   f.setBeforeAdmission(async()=>{statusReadsAtHook=(await f.traces()).filter(r=>r.op==="status").length;await f.edit(run,{revision:before.revision+1});savedBefore=await readFile(join(f.root,"runs",run+".json"),"utf8");});
-  const result=await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{expectedVersion:1,expectedRevision:s.engine.revision,
+  const result=await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,
     runLinkId:s.request.runLink!.runLinkId},"b1b-a2-expect-start-0001");
   const trace=(await f.traces()).find(row=>row.op==="start")!;
   assert.ok(trace.args.includes("--expect"),"A2 Start includes exact --expect bytes");
@@ -309,7 +310,7 @@ test("B1b A2 engine receipts refuse lead confirmation and mismatched record",asy
 
 test("B1b A2 expect pins cache and context refuse before files or spawn",async t=>{
   const f=await fixture(t),id=await f.intake(),s=await f.confirm(id),run=s.request.runLink!.loopRunId;
-  const binding:LoopBridgeBindingV1={schemaVersion:1,body:{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},
+  const binding:LoopBridgeBindingV1={schemaVersion:1,body:{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId},
     localVersion:1,adapterId:f.raw.adapterId,loopRunId:run,toolingRevision:f.raw.toolingRevision,a2SchemaVersion:1,schemaDigest:f.raw.schemaDigest,
     requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText),runLinkId:s.request.runLink!.runLinkId,
     authorizationId:"authorization:fixture",inputVersion:1,expectedRevision:s.engine.revision,evidence:null};
@@ -345,7 +346,7 @@ test("B1b A2 expect path and byte collisions refuse before engine effects",async
       return expected;
     }}});
     try{
-      const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+      const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
       const result=await bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},`b1b-a2-collision-${collision}`);
       assert.equal(result.state,"uncertain");assert.deepEqual(await readdir(f.configuration.runRoot),[],"invalid expectation path/bytes spawn no engine and write no run");
       assert.equal((await f.db.query("SELECT * FROM control_loop_improvement_run_links")).rows.length,0);
@@ -394,7 +395,7 @@ test("B1b sealed SYNTHETIC approval, owner answer and atomic race refusal",async
   assert.equal((await f.post(`${suffix}/answer`,answer)).status,409);
   await f.edit(run,{state:"ready"});s=await f.get(id);
   f.setBeforeAdmission(()=>f.edit(run,{revision:s.engine.revision+1}));
-  const race=await f.post(`${suffix}/start`,{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId});
+  const race=await f.post(`${suffix}/start`,{route:S4_FIXTURE_ROUTE,expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId});
   assert.equal(race.status,202);assert.equal((await race.json() as {state:string}).state,"refused");
   assert.equal((await f.traces()).filter(e=>e.op==="start").length,1,"B1b engine lock observes exactly one refused Start invocation");
   assert.equal((await f.raw.status(run)).state,"ready","B1b engine lock refuses revision race before launch");
@@ -451,7 +452,7 @@ test("B1b all seven routes recheck expiry, revocation, project and replay author
     {suffix:"intake",body:{description}},
     {suffix:`${suffix}/status`,body:undefined},
     {suffix:`${suffix}/confirm`,body:{expectedVersion:1,expectedRevision:s.engine.revision,requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256}},
-    {suffix:`${suffix}/start`,body:{expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId}},
+    {suffix:`${suffix}/start`,body:{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId}},
     {suffix:`${suffix}/stop`,body:{runLinkId:s.request.runLink!.runLinkId}},
     {suffix:`${suffix}/approve`,body:{expectedVersion:1,expectedRevision:1,step:"plan",inputVersion:1,head:"a".repeat(40),reportSha256:"b".repeat(64)}},
     {suffix:`${suffix}/answer`,body:{expectedVersion:1,expectedRevision:1,questionId:"question:owner",inputVersion:1,questionReportSha256:"c".repeat(64),text:"Keep scope."}},
@@ -493,7 +494,7 @@ test("B1b status is observational and no contract enables no route",async t=>{
 
 test("B1b Stop still targets the original owned run after refused settings change",async t=>{
   const f=await fixture(t),id=await f.intake(),s=await f.confirm(id);
-  assert.equal((await f.post(`${encodeURIComponent(id)}/start`, { expectedVersion: s.request.currentVersion,
+  assert.equal((await f.post(`${encodeURIComponent(id)}/start`, {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion,
     expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId })).status, 202);
   const desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,f.adapter.contract);
   const before=(await f.db.query("SELECT * FROM control_loop_improvement_inputs ORDER BY version")).rows;
@@ -508,7 +509,7 @@ test("B1b dropped request and lost dispatch reply consume one durable attempt",a
   const f=await fixture(t);let entered!:()=>void,release!:()=>void,calls=0;
   const waiting=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
   const adapter={...f.adapter,intake:async(id:string,b:LoopBridgeBindingV1,text:string,fence:()=>void)=>{calls++;entered();await gate;return f.adapter.intake(id,b,text,fence);}};
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
   const handler=createImproveControlRoomHttpHandlerV1({origin,trust,loopBridge:bridge,clock:()=>now});
   const key="b1b-dropped-request-0001",controller=new AbortController();
   const original=request(`${f.base}/intake`,"POST",{description},key);
@@ -544,7 +545,7 @@ test("B1b expired admission never spawns and post-dispatch database failure reco
   const db:import('../src/persistence/database').DatabaseClient={query:f.client.query,transaction:callback=>f.client.transaction(tx=>callback(traced(tx))),
     transactionWithPreCommitCheck:async(callback,check)=>{const value=await f.client.transactionWithPreCommitCheck(tx=>callback(traced(tx)),check);if(expire&&claimed){expire=false;current+=6000;}return value;}};
   const adapter={...f.adapter,intake:async(id:string,b:LoopBridgeBindingV1,text:string,fence:()=>void)=>{launches++;return f.adapter.intake(id,b,text,fence);}};
-  const bridge=new ImproveControlRoomLoopServiceV1(db,{tenantId:'tenant:web',workspaceId:'workspace:web'},{integrityKey:KEY,adapter},()=>current);
+  const bridge=new ImproveControlRoomLoopServiceV1(db,{tenantId:'tenant:web',workspaceId:'workspace:web'},{providers:s4ProviderServiceV1(db,{tenantId:'tenant:web',workspaceId:'workspace:web'},()=>current),integrityKey:KEY,adapter},()=>current);
   const expired=await bridge.mutate(f.identity,f.project.projectId,null,'intake',{description},'b1b-expired-admission-0001');
   assert.equal(expired.state,'uncertain');assert.equal(launches,0,'expired committed admission never reaches spawn');
   assert.equal((await bridge.mutate(f.identity,f.project.projectId,null,'intake',{description},'b1b-expired-admission-0001')).state,'uncertain');assert.equal(launches,0);
@@ -556,7 +557,7 @@ test("B1b expired admission never spawns and post-dispatch database failure reco
 test("B1b sweep database errors reach the transaction while verification failures retain files", async t => {
   const f = await fixture(t);
   const crashed = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
-    { integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
+    {providers:s4ProviderServiceV1(f.client,{ tenantId: 'tenant:web', workspaceId: 'workspace:web' },() => now), integrityKey: KEY, adapter: { ...f.adapter, releaseCommandFiles: async () => {} } }, () => now);
   const retained = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-db-invalid');
   const finished = await crashed.mutate(f.identity, f.project.projectId, null, 'intake', { description }, 'b1b-sweep-db-finished');
   const diagnostic = t.mock.method(console, 'warn', () => {});
@@ -585,7 +586,7 @@ test("B1b sweep database errors reach the transaction while verification failure
       catch (error) { failures.push(error); throw error; }
     }, check) };
   const restarted = new ImproveControlRoomLoopServiceV1(client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' },
-    { integrityKey: KEY, adapter: f.adapter }, () => now);
+    {providers:s4ProviderServiceV1(client,{ tenantId: 'tenant:web', workspaceId: 'workspace:web' },() => now), integrityKey: KEY, adapter: f.adapter }, () => now);
   for (let i = 0; i < 2; i++) {
     const receipt = await restarted.mutate(f.identity, f.project.projectId, null, 'intake', { description }, `b1b-sweep-db-trigger-${i}`);
     assert.equal(receipt.state, 'accepted', 'best-effort sweep cannot change the admitted command result');
@@ -605,7 +606,7 @@ test("B1b canStop after a refused Start agrees with the Stop route", async t => 
   const f = await fixture(t), id = await f.intake(), s = await f.confirm(id), suffix = encodeURIComponent(id);
   await writeFile(join(f.root, "refusal.json"), JSON.stringify({ op: "start", code: 3 }));
   const refused = await f.bridge.mutate(f.identity, f.project.projectId, id, 'start',
-    { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId }, 'b1b-refused-start-0001');
+    {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId }, 'b1b-refused-start-0001');
   assert.equal(refused.state, 'refused');
   await rm(join(f.root, "refusal.json"));
   const after = await f.get(id);

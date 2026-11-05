@@ -176,10 +176,19 @@ const engineRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const loopExpected = { expectedVersion: loopVersion, expectedRevision: engineRevision };
 export const loopBridgeOperationSchemaV1 = z.enum(["intake", "confirm", "start", "stop", "approve", "answer"]);
 export type LoopBridgeOperationV1 = z.infer<typeof loopBridgeOperationSchemaV1>;
+const startRoute = z.object({providerId:z.string().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/),
+  model:z.string().min(1).max(180).regex(/^[^\x00-\x1f\x7f-\x9f]*$/)}).strict();
+const paidAdmission = z.object({optIn:z.literal(true),capNanoUsd:z.string().regex(/^[1-9][0-9]{0,29}$/)}).strict();
+export const loopPaidPinSchemaV1 = z.object({
+  providerId:startRoute.shape.providerId,model:startRoute.shape.model,
+  servedModelId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/),
+  providerVersion:loopVersion,priceRowDigest:digest,capNanoUsd:paidAdmission.shape.capNanoUsd,
+}).strict();
 export const loopBridgeBodiesV1 = {
   intake: z.object({ description: loopDescription, settingsEdits: z.string().optional(), waiverId: id.optional() }).strict(),
   confirm: z.object({ ...loopExpected, requestSha256: rawHash, settingsSha256: rawHash }).strict(),
-  start: z.object({ ...loopExpected, runLinkId: id }).strict(),
+  start: z.object({ ...loopExpected, runLinkId: id, route:startRoute.optional(),paid:paidAdmission.optional() }).strict()
+    .refine(value => !value.paid || !!value.route),
   stop: z.object({ runLinkId: id }).strict(),
   approve: z.object({ ...loopExpected, step: z.enum(["plan", "spec"]),
     inputVersion: z.union([loopVersion, z.string().min(1).max(180)]), head: revision, reportSha256: rawHash }).strict(),
@@ -197,8 +206,14 @@ export const loopBridgeBindingSchemaV1 = z.object({
   requestSha256: rawHash, settingsSha256: rawHash,
   runLinkId: id.nullable(), authorizationId: id.nullable(),
   inputVersion: z.union([loopVersion, z.string().min(1).max(180)]).nullable(),
-  expectedRevision: engineRevision.nullable(), evidence: digest.nullable(),
-}).strict().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65536);
+  expectedRevision: engineRevision.nullable(), evidence: digest.nullable(), paidPin:loopPaidPinSchemaV1.optional(),
+}).strict().refine(value => {
+  if (!Object.hasOwn(value, "paidPin")) return !Object.hasOwn(value.body,"paid");
+  const body=loopBridgeBodiesV1.start.safeParse(value.body);
+  return body.success && !!body.data.paid && !!body.data.route
+    && body.data.route.providerId === value.paidPin!.providerId && body.data.route.model === value.paidPin!.model
+    && body.data.paid.capNanoUsd === value.paidPin!.capNanoUsd;
+}).refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65536);
 export type LoopBridgeBindingV1 = z.infer<typeof loopBridgeBindingSchemaV1>;
 export type LoopBridgeOutcomeV1 = z.infer<typeof loopBridgeOutcomeSchemaV1>;
 export const loopBridgeReceiptSchemaV1 = z.object({ schemaVersion: z.literal(1), requestId: id,
@@ -215,7 +230,7 @@ export const loopImprovementStatusSchemaV1 = z.object({
   engineRevision: engineRevision.nullable(),
   state: z.enum(["ready", "running", "waiting_approval", "waiting_question", "waiting_owner", "blocked", "stopped", "candidate_ready"]).nullable(),
   startState: z.enum(["not_started", "dispatched", "started", "uncertain"]),
-  confirmationCurrent: z.boolean(), canStart: z.boolean(), canStop: z.boolean(),
+  confirmationCurrent: z.boolean(), canStart: z.boolean(), canStop: z.boolean(), providerRoute:startRoute.optional(),
   progress: z.object({ stepId: z.string().min(1).max(180).nullable(), role: z.string().min(1).max(240).nullable(),
     attempt: loopVersion.nullable(), requestedModel: z.string().min(1).max(240).nullable(),
     observedModel: z.string().min(1).max(240).nullable(), identityVerified: z.boolean(),

@@ -4,10 +4,12 @@ import { taskFixture } from './helpers/web-task';
 import { now, origin, request, trust, token } from './helpers/web-foundation';
 import { LoopPolicyServiceV1, LoopPolicyRefusedV1 } from '../src/web/v1/loop-policy-service';
 import { createLoopPolicyHttpHandlerV1, isLoopPolicyRouteV1 } from '../src/web/v1/loop-policy-http';
+import { LoopProviderServiceV1 } from '../src/web/v1/loop-provider-service';
 import { createAccessVerifier } from '../src/web/v1/access-verifier';
 
 const scope = { tenantId: 'tenant:web', workspaceId: 'workspace:web' };
-const defaults = '{"roles":{"build":"default","final":"default"},"array":[1,2],"object":{"child":1},"nullable":null,"overrides":{"allow_standard_final":false}}';
+const route = {providerId:'provider-p72',model:'synthetic/p72'};
+const defaults = '{"providerRoute":{"providerId":"provider-p72","model":"synthetic/p72"},"roles":{"build":"default","final":"default"},"array":[1,2],"object":{"child":1},"nullable":null,"overrides":{"allow_standard_final":false}}';
 let sequence = 0;
 const key = () => `p72-policy-key-${String(++sequence).padStart(8,'0')}`;
 const locked = (e: unknown) => e instanceof LoopPolicyRefusedV1 && e.reasons[0]?.code === 'POLICY_LOCKED';
@@ -19,16 +21,24 @@ async function fixture(t: TestContext) {
   const identity = createAccessVerifier({...trust,validUntilMs:at+3600000})(request(undefined,undefined,undefined,undefined,jwt),at);
   await f.db.query('INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)',
     [scope.tenantId,identity.tokenDigest,'identity:web',identity.issuedAt,expires]);
+  await f.db.query(`INSERT INTO control_loop_roster_models(tenant_id,name,position,launcher,provider,family,model_class,roles,efforts,
+    default_effort,cost,on_off,note,nick,max_build_grade,updated_by,updated_at)
+    VALUES('tenant:web','synthetic/p72',1,'synthetic-p72','','','','','','','','on','','','','identity:web',$1)`,[new Date(at).toISOString()]);
+  const providers=new LoopProviderServiceV1(f.client,scope,{availability:async()=> 'available'},()=>at);
+  await providers.upsert(identity,route.providerId,{expectedVersion:0,provider:{provider_id:route.providerId,display_name:'Synthetic P72',
+    base_url:'https://example.com',billing_kind:'subscription',secret_ref:{kind:'launcher',launcher:'synthetic-p72'},
+    models:[{roster_name:route.model,launcher:'synthetic-p72',served_model_id:'served/p72'}],price_source_url:null,price_source_format:null,
+    credit_amount_nano_usd:null,credit_expires_on:null,credit_note:''}},key());
   const checks: string[] = [];
   let check = async (_text: string) => ({eligible:true,reasons:[] as {code:string;explanation:string}[]});
   const tools = {settingsText:defaults,checkSettings:async(text:string)=>{checks.push(text);return check(text);}};
-  const service = new LoopPolicyServiceV1(f.client,scope,tools);
+  const service = new LoopPolicyServiceV1(f.client,scope,tools,Date.now,providers);
   const handler = createLoopPolicyHttpHandlerV1({origin,trust:{...trust,validUntilMs:at+3600000},service});
   const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/loop-policy`;
   const send = (suffix:string,method:string,body?:unknown,k=key())=>handler(request(path+suffix,method,body,k,jwt));
   const put = (layer:string,body:unknown,k=key())=>send('/'+layer,'PUT',body,k);
   const count = async(table:string)=>(await f.db.query<{n:number}>(`SELECT count(*)::int n FROM ${table}`)).rows[0]!.n;
-  return {...f,identity,service,tools,checks,put,send,path,count,setCheck:(value:typeof check)=>{check=value;}};
+  return {...f,identity,service,tools,providers,checks,put,send,path,count,setCheck:(value:typeof check)=>{check=value;}};
 }
 
 test('P72 lockedPaths exact body readback canonical replay digest and clearing', async t => {
@@ -121,14 +131,15 @@ function engine(tools: {settingsText:string;checkSettings(text:string):Promise<{
     runs.set(b.loopRunId,s);return structuredClone(s);
   };
   const adapter:LoopAdapterV1={...tools,adapterId:'adapter:synthetic',toolingRevision,schemaDigest:`sha256:${'b'.repeat(64)}`,contract,
+    providerRoutes:{paidExecutionReady:false,resolveStartRoute:async()=>({...route,additionalRoutes:[]})},
     reserveRun:()=>`fixture-run-${randomBytes(16).toString('hex')}`,available:()=>true,
     intake:(id,b,text,_f,signed)=>apply('intake',id,b,text,signed),confirmRequest:(id,b)=>apply('confirm',id,b),start:(id,b)=>apply('start',id,b),stop:(id,b)=>apply('stop',id,b),
     approve:(id,b)=>apply('approve',id,b),answer:(id,b)=>apply('answer',id,b),status:async run=>{const s=runs.get(run);assert.ok(s);return structuredClone(s);},close:async()=>{}};
   return {adapter,runs,calls,refuse:()=>{refuseIntake=true;}};
 }
 function bridge(f: Awaited<ReturnType<typeof fixture>>, db: DatabaseClient=f.client) {
-  const e=engine(f.tools),policy=new LoopPolicyServiceV1(db,scope,e.adapter);
-  return {...e,policy,service:new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey,adapter:e.adapter,policy}),desk:new ImproveControlRoomDeskServiceV1(db,scope,integrityKey,undefined,Date.now,e.adapter.contract)};
+  const e=engine(f.tools),policy=new LoopPolicyServiceV1(db,scope,e.adapter,Date.now,f.providers);
+  return {...e,policy,service:new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey,adapter:e.adapter,policy,providers:f.providers}),desk:new ImproveControlRoomDeskServiceV1(db,scope,integrityKey,undefined,Date.now,e.adapter.contract)};
 }
 async function waiver(f:Awaited<ReturnType<typeof fixture>>,path='roles.final') {
   return (await f.service.createWaiver(f.identity,f.project.projectId,{path,reason:'Bounded synthetic exception',expiresAt:new Date(Date.now()+300000).toISOString()},key())).waiver;
@@ -141,7 +152,7 @@ async function confirm(f:Awaited<ReturnType<typeof fixture>>,b:ReturnType<typeof
   const s=await b.service.status(f.identity,f.project.projectId,requestId);
   await b.service.mutate(f.identity,f.project.projectId,requestId,'confirm',{expectedVersion:s.request.currentVersion,expectedRevision:s.engine.revision,requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},key());
   const ready=await b.service.status(f.identity,f.project.projectId,requestId);
-  return {expectedVersion:ready.request.currentVersion,expectedRevision:ready.engine.revision,runLinkId:ready.request.runLink!.runLinkId};
+  return {expectedVersion:ready.request.currentVersion,expectedRevision:ready.engine.revision,runLinkId:ready.request.runLink!.runLinkId,route};
 }
 
 test('P72 explicit waiver selection and intake consume one request with immutable source lineage',async t=>{
@@ -316,10 +327,12 @@ import { readFile } from 'node:fs/promises';
 import { readPrivateWebSchemaDigest } from '../src/web/v1/private-database-preflight';
 test('P72 empty enforcement down re-up restores exact shape and retained unlocked layers refuse',async t=>{
   const f=await fixture(t),before=await readPrivateWebSchemaDigest(f.client);
+  await f.db.exec(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
   await f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
   assert.equal(await readPrivateWebSchemaDigest(f.client),'fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f');
   await f.db.exec('BEGIN');
-  try { await f.db.exec(await readFile('db/migrations/0310_control_loop_policy_enforcement.sql','utf8'));await f.db.exec('COMMIT'); }
+  try { await f.db.exec(await readFile('db/migrations/0310_control_loop_policy_enforcement.sql','utf8'));
+    await f.db.exec(await readFile('db/migrations/0311_control_loop_paid_admission.sql','utf8'));await f.db.exec('COMMIT'); }
   catch(error) { await f.db.exec('ROLLBACK');throw error; }
   assert.equal(await readPrivateWebSchemaDigest(f.client),before,'no physical column-number drift after empty down re-up');
   await f.service.put(f.identity,f.project.projectId,'project',{expectedVersion:0,settings:'{}',lockedPaths:[]},key());

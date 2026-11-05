@@ -332,7 +332,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy }, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers:loopProviders }, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,

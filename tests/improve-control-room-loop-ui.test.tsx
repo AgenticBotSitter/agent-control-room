@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -16,10 +17,10 @@ import { now, origin, request, trust } from "./helpers/web-foundation";
 import { loopImprovementBrowserClient as client } from "../src/web/v1/improve-control-room-loop-browser-client";
 
 const KEY = new Uint8Array(32).fill(64);
-const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC"}';
+const settingsText = JSON.stringify({project:{host_adapter:'local-loop'},fixture:'SYNTHETIC',providerRoute:S4_FIXTURE_ROUTE});
 const description = "  Improve the saved request.\nKeep exact text.  ";
 async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missing" = "accepted", startError: "REFUSED" | "INELIGIBLE" | "LAUNCH_UNCERTAIN" | null = null) {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B2a", scalar: "string" });
@@ -45,7 +46,7 @@ async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missi
       receipts: saved.receipts.map(receipt => ({ ...receipt, error: "LAUNCH_UNCERTAIN" })) }) as unknown as LoopEngineStatusV1;
     return structuredClone(saved);
   };
-  const adapter: LoopAdapterV1 = { adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
+  const adapter: LoopAdapterV1 = {providerRoutes:s4FixtureRoutes, adapterId: run.adapterId, toolingRevision, schemaDigest: sha256Digest({ fixture: "SYNTHETIC schema" }),
     settingsText, contract, reserveRun: () => run.loopRunId, available: () => true,
     status: async () => { calls.push("status"); return structuredClone(saved); },
     start: (id, b, fence) => apply("start", id, b, fence), stop: (id, b, fence) => apply("stop", id, b, fence),
@@ -56,7 +57,7 @@ async function fixture(startOutcome: "accepted" | "waiting" | "refused" | "missi
   await desk.authorizeLoopStart(f.identity, f.project.projectId, { requestId: draft.request.requestId, expectedVersion: 1,
     runLinkId: linked.runLink.runLinkId, requestSha256: loopByteHashV1(description), settingsSha256: loopByteHashV1(settingsText) },
     "b2a-synthetic-authority-0001", { inputVersion: saved.inputVersion, settingsDigest: saved.settingsDigest, revision: saved.revision, confirmation: saved.confirmation! });
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: KEY, adapter }, () => now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, {providers:s4ProviderServiceV1(f.client,{ tenantId: "tenant:web", workspaceId: "workspace:web" },() => now), integrityKey: KEY, adapter }, () => now);
   const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, loopBridge: bridge, service: desk, clock: () => now });
   return { ...f, desk, bridge, handler, calls, requestId: draft.request.requestId, link: linked.runLink.runLinkId,
     snapshot: () => structuredClone(saved),
@@ -111,7 +112,7 @@ test("B2a confirmed run Start progress Stop", async () => {
     await act(async () => m.button("Start confirmed work").click()); await settle();
     assert.match(m.text(), /Work is running/); assert.match(m.text(), /Requested model: Not reported yet/); assert.match(m.text(), /Observed model: Not verified yet/);
     assert.match(m.text(), /Repairs: Not reported yet/); assert.ok(m.text().includes(description));
-    assert.deepEqual(JSON.parse(wire.posts[0]!.body), { expectedVersion: 1, runLinkId: f.link, expectedRevision: 4 });
+    assert.deepEqual(JSON.parse(wire.posts[0]!.body), {route:S4_FIXTURE_ROUTE, expectedVersion: 1, runLinkId: f.link, expectedRevision: 4 });
     assert.match(wire.posts[0]!.key, /^loop-start:/);
     await act(async () => m.button("Stop this run").click()); await settle();
     assert.match(m.text(), /Stopped/); assert.deepEqual(JSON.parse(wire.posts[1]!.body), { runLinkId: f.link });
@@ -251,7 +252,7 @@ test("B2a missing confirmation and changed A2 scalar refuse Start with zero writ
       try { await settle(); await act(async () => m.button("Start confirmed work").click()); assert.equal(wire.posts.length, 0); }
       finally { await m.close(); }
       const response = await f.handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/${encodeURIComponent(f.requestId)}/start`, "POST",
-        { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "b2a-refused-start-0001"));
+        {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "b2a-refused-start-0001"));
       assert.equal(response.status, 409); assert.deepEqual((await f.db.query("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0], before);
     }
     assert.equal(f.calls.filter(x => x !== "status").length, 0);
@@ -307,7 +308,7 @@ test("B2a dropped-before-admission and uncertain Stop retain separate replay key
 test("B2a two independently frozen browser Starts contend on the one journal", async () => {
   const f = await fixture(), wire = transport(f), previous = globalThis.fetch; globalThis.fetch = wire.fetcher;
   try {
-    const body = JSON.stringify({ expectedVersion: 1, expectedRevision: 4, runLinkId: f.link });
+    const body = JSON.stringify({route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link });
     const results = await Promise.allSettled([client.start(f.project.projectId, f.requestId, { body, key: "loop-start:browser-one-0001" }),
       client.start(f.project.projectId, f.requestId, { body, key: "loop-start:browser-two-0001" })]);
     assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
@@ -377,7 +378,7 @@ for (const error of ["REFUSED", "INELIGIBLE"] as const) test(`B2a F1 refused Sta
   const f = await fixture("refused", error), wire = transport(f);
   try {
     const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:refused-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:refused-0001");
     assert.equal(receipt.state, "refused");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.startState, "not_started", "B2a refused Start is not dispatched");
@@ -392,7 +393,7 @@ for (const error of ["REFUSED", "INELIGIBLE"] as const) test(`B2a F1 refused Sta
       assert.equal(wire.posts.length, 0);
     } finally { await m.close(); }
     await assert.rejects(f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 5, runLinkId: f.link }, "loop-start:refused-new-key"));
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 5, runLinkId: f.link }, "loop-start:refused-new-key"));
     assert.equal(f.calls.filter(x => x === "start").length, 1, "B2a refusal never permits redispatch");
   } finally { await f.close(); }
 });
@@ -401,7 +402,7 @@ for (const outcome of ["waiting", "missing"] as const) test(`B2a F1 ${outcome} S
   const f = await fixture(outcome), wire = transport(f);
   try {
     const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:waiting-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:waiting-0001");
     assert.equal(receipt.state, outcome === "waiting" ? "waiting" : "uncertain");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.startState, outcome === "waiting" ? "dispatched" : "uncertain");
@@ -422,7 +423,7 @@ test("B2a F2 stopped run retains exact saved confirmation", async () => {
   const f = await fixture(), wire = transport(f);
   try {
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:confirmation-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:confirmation-0001");
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "stop", { runLinkId: f.link }, "loop-stop:confirmation-0001");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.confirmationCurrent, true, "B2a stopped exact confirmation remains current");
@@ -518,7 +519,7 @@ test("B2a R3 stopped run refuses fresh Start and confirm", async () => {
   const f = await fixture();
   try {
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-0001");
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "stop", { runLinkId: f.link }, "loop-stop:stopped-0001");
     // Fresh local version has no prior authorization/confirmation claim that could mask the stopped guard.
     const revised = await f.desk.reviseLoopDraft(f.identity, f.project.projectId, { requestId: f.requestId, expectedVersion: 1,
@@ -531,7 +532,7 @@ test("B2a R3 stopped run refuses fresh Start and confirm", async () => {
       requestSha256: loopByteHashV1(description), settingsSha256: loopByteHashV1(settingsText) };
     assert.equal((await f.handler(request(`${base}/confirm`, "POST", confirm, "loop-confirm:stopped-0001"))).status,
       409, "B2a stopped confirmation refuses before dispatch");
-    assert.equal((await f.handler(request(`${base}/start`, "POST", { expectedVersion: 2,
+    assert.equal((await f.handler(request(`${base}/start`, "POST", {route:S4_FIXTURE_ROUTE, expectedVersion: 2,
       expectedRevision: saved.revision, runLinkId: f.link }, "loop-start:stopped-fresh-0001"))).status,
       409, "B2a stopped Start refuses before dispatch");
     assert.deepEqual(f.calls.filter(x => x !== "status"), ["start", "stop"]);
@@ -543,7 +544,7 @@ test("B2a R3 LAUNCH_UNCERTAIN outcome never says refused", async () => {
   const f = await fixture("refused", "LAUNCH_UNCERTAIN");
   try {
     const receipt = await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:uncertain-wording-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:uncertain-wording-0001");
     assert.equal(receipt.state, "uncertain"); assert.equal(receipt.error, "LAUNCH_UNCERTAIN");
     const { display } = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(display.startState, "uncertain");
@@ -567,7 +568,7 @@ test("B2a R3 offline panel sends zero mutations", async () => {
     await act(async () => m.button("Start confirmed work").click());
     assert.equal(wire.posts.length, 0, "B2a offline Start sends no POST");
     await f.bridge.mutate(f.identity, f.project.projectId, f.requestId, "start",
-      { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:offline-0001");
+      {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:offline-0001");
     await act(async () => m.button("Refresh status").click()); await settle();
     assert.equal(m.button("Stop this run").disabled, false);
     await act(async () => m.button("Stop this run").click());
@@ -584,7 +585,7 @@ test("B2a R3 stopped engine cannot admit its first website Start", async () => {
     const status = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
     assert.equal(status.display.confirmationCurrent, true);
     const response = await f.handler(request(`/api/v1/projects/${f.project.projectId}/improvements/loop/${f.requestId}/start`,
-      "POST", { expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-engine-0001"));
+      "POST", {route:S4_FIXTURE_ROUTE, expectedVersion: 1, expectedRevision: 4, runLinkId: f.link }, "loop-start:stopped-engine-0001"));
     assert.equal(response.status, 409, "B2a stopped engine refuses Start despite current confirmation");
     assert.deepEqual(f.calls.filter(x => x !== "status"), []);
     assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);

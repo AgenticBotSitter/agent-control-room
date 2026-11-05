@@ -89,7 +89,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // previous value was `0b983887...`.
 // Includes P72 locks, scoped waiver transitions and closed waiverId intake.
 // Web/updater digests measured equal in PGlite and native PostgreSQL 17.
-export const privateWebSchemaDigest = "0c8044142b71e057fab5fc9f89e1f3aad93b773966932ab8c31fa3d447be3f29";
+export const privateWebSchemaDigest = "0d0e9128a6492569aad05dfc35c024ac5d52ac5c393f882143a23a3c1d7cee9e";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway

@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture, seedS4ProviderV1 } from './improve-control-room-loop-recovery';
 // B5 first website proof: strict real-proof configuration, preflight, the
 // disposable proof-site fixture, the independently executed diagnostic and the
 // retained-evidence verifier. Imports are inert: nothing here opens a listener,
@@ -566,6 +567,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
  * is that the real client only reads while saved state moves. Its PASS is not real B5. */
 export async function syntheticFirstWebsiteEngineV1(input: { client: import("../../src/persistence/database").DatabaseClient;
   scope: { tenantId: string; workspaceId: string }; projectId: string; clock: () => number; heads?: { base: string; rejected: string; final: string } }) {
+  await seedS4ProviderV1(input.client,input.scope);
   const { ImproveControlRoomDeskServiceV1 } = await import("../../src/improve-control-room/v1/service");
   const { ImproveControlRoomLoopServiceV1 } = await import("../../src/web/v1/improve-control-room-loop-service");
   const { LoopCandidatePublisherV1, LoopCandidateStaleCompletionV1 } = await import("../../src/improve-control-room/v1/loop-candidate-publisher");
@@ -578,7 +580,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
   const { scope, clock } = input, now = clock(), f = { client: input.client, project: { projectId: input.projectId } };
   const KEY = new Uint8Array(32).fill(64);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B5 tooling" }), schemaDigest = sha256Digest({ fixture: "SYNTHETIC B5 schema" });
-  const settingsText = JSON.stringify({ fixture: "SYNTHETIC B5", project: { risk_categories: B5_REQUIRED_RISK.categories, test_checks: B5_RECIPES } });
+  const settingsText = JSON.stringify({ fixture: "SYNTHETIC B5", providerRoute:S4_FIXTURE_ROUTE, project: { risk_categories: B5_REQUIRED_RISK.categories, test_checks: B5_RECIPES } });
   const contract = { toolingRevision, decodeRunIdentity: (v: unknown) => loopImprovementRunIdentitySchemaV1.parse(v),
     decodeObservation: (v: unknown) => loopImprovementObservationSchemaV1.parse(v),
     matchesSavedInput: (_r: unknown, o: { settingsDigest: string; confirmation: { sha256: string } }, i: { description: string; settingsText: string }) =>
@@ -608,7 +610,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
     saved!.receipts.push({ commandId: id, bindingDigest: sha256Digest(b), state: "accepted", error: null, evidenceDigest: sha256Digest({ op, id }) });
     return snapshot();
   };
-  const adapter: Adapter = { adapterId: "adapter:synthetic-b5", toolingRevision, schemaDigest, settingsText, contract,
+  const adapter: Adapter = { providerRoutes:s4FixtureRoutes, adapterId: "adapter:synthetic-b5", toolingRevision, schemaDigest, settingsText, contract,
     // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
     checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     available: () => true, reserveRun: () => `synthetic-run:b5-${++sequence}`,
@@ -648,7 +650,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
   const config = { integrityKey: KEY, contract, schemaDigest, source, repository };
   const desk = new ImproveControlRoomDeskServiceV1(f.client, scope, KEY, undefined, clock, contract, config);
   const publisher = new LoopCandidatePublisherV1(desk, config);
-  const openBridge = () => new ImproveControlRoomLoopServiceV1(f.client, scope, { integrityKey: KEY, adapter, loopCandidates: config }, clock);
+  const openBridge = () => new ImproveControlRoomLoopServiceV1(f.client, scope, {providers:s4ProviderServiceV1(f.client,scope,clock), integrityKey: KEY, adapter, loopCandidates: config }, clock);
   const step = (role: string, head: string, verdict: string | null) => { launches++; steps.push({ n: steps.length + 1, role, head, verdict }); };
   /** One fixture progress step, called by the test. It advances saved engine state only when the run is not waiting on the owner. */
   const tick = async () => {
@@ -681,7 +683,7 @@ export async function driveSyntheticFirstWebsiteV1(e: Awaited<ReturnType<typeof 
   await bridge.mutate(identity, projectId, requestId, "confirm", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
     requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 }, `${prefix}-confirm-0001`);
   s = await current();
-  await bridge.mutate(identity, projectId, requestId, "start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, `${prefix}-start-0001`);
+  await bridge.mutate(identity, projectId, requestId, "start", {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, `${prefix}-start-0001`);
   await e.tick(); s = await current();
   await bridge.mutate(identity, projectId, requestId, "answer", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
     questionId: e.question.questionId, inputVersion: e.question.inputVersion, questionReportSha256: e.question.reportSha256, text: "Amber." }, `${prefix}-answer-0001`);
@@ -698,7 +700,7 @@ export async function syntheticFirstWebsiteFixtureV1(options: { dataDir?: string
   const { taskFixture, taskFixtureOnDisk } = await import("./web-task");
   const { now, origin, trust } = await import("./web-foundation");
   const { createPrivateWebProcess } = await import("../../src/web/v1/private-process");
-  const f = options.dataDir ? await taskFixtureOnDisk(options.dataDir) : await taskFixture();
+  const f = options.dataDir ? await taskFixtureOnDisk(options.dataDir) : await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };

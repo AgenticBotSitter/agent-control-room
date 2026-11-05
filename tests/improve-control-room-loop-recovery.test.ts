@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createPrivateTaskBootstrap } from '../src/web/v1/private-task-startup';
@@ -35,11 +36,11 @@ import { now } from './helpers/web-foundation';
 import { syntheticRecoveryCapability } from './helpers/improve-control-room-loop-recovery';
 import type { TestContext } from 'node:test';
 async function recoveryFixture(t:TestContext,pendingStart=false){
-  const f=await taskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t),clock=()=>now;
+  const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t),clock=()=>now;
   const scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
   const saved=await seedRecoveryRun({...f,db:f.client,scope},e,projectId,clock,'b3a-seed',pendingStart);
   const c=syntheticRecoveryCapability(e),adapter=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,recovery:c.capability}});t.after(()=>adapter.close());
-  const service=(a:LoopAdapterV1=adapter)=>new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:a},clock);
+  const service=(a:LoopAdapterV1=adapter)=>new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,clock),integrityKey:recoveryKey,adapter:a},clock);
   const bridge=service(),target={projectId,requestId:saved.id,ownerIdentityId:'identity:web'};
   return{...f,...e,...saved,...c,seedAdapter:e.adapter,scope,projectId,adapter,bridge,service,target,port:bridge.recoveryPort()};
 }
@@ -163,14 +164,14 @@ import { join } from 'node:path';
 import { reachableTests,workflowCommands } from '../scripts/check-test-lane-coverage.mjs';
 
 test('B3a pending intake and confirm remain owner exact retries',async t=>{
-  const f=await taskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
+  const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
   // Reuse the normal seed only to establish the self-project presentation.
   await seedRecoveryRun({...f,db:f.client,scope},e,projectId,()=>now);
   const c=syntheticRecoveryCapability(e),adapter=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,recovery:c.capability}});t.after(()=>adapter.close());
-  const ordinary=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:e.adapter},()=>now);
-  const recovery=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter},()=>now).recoveryPort();
+  const ordinary=new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>now),integrityKey:recoveryKey,adapter:e.adapter},()=>now);
+  const recovery=new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>now),integrityKey:recoveryKey,adapter},()=>now).recoveryPort();
   for(const op of ['intake','confirm'] as const){
-    const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(f.client,op),scope,{integrityKey:recoveryKey,adapter:e.adapter},()=>now);
+    const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(f.client,op),scope,{providers:s4ProviderServiceV1(resultCrashDatabase(f.client,op),scope,()=>now),integrityKey:recoveryKey,adapter:e.adapter},()=>now);
     const intakeBody={description:'SYNTHETIC pending exact retry '+op};
     const draft=await(op==='intake'?crash:ordinary).mutate(f.identity,projectId,null,'intake',intakeBody,`b3a-pending-${op}-intake`);
     const id=draft.requestId;let body:unknown=intakeBody;
@@ -438,7 +439,7 @@ test('B3a interrupted decision and Stop results reconcile without redispatch',as
       body={expectedVersion:1,expectedRevision:3,questionId:question.questionId,inputVersion:1,questionReportSha256:question.reportSha256,text:'Use the saved authorized answer.'};
     }
     const key=`b3a-interrupted-${operation}-0001`;
-    const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(f.client,operation),f.scope,{integrityKey:recoveryKey,adapter:f.seedAdapter},()=>now);
+    const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(f.client,operation),f.scope,{providers:s4ProviderServiceV1(resultCrashDatabase(f.client,operation),f.scope,()=>now),integrityKey:recoveryKey,adapter:f.seedAdapter},()=>now);
     const lost=await crash.mutate(f.identity,f.projectId,f.id,operation,body,key);assert.equal(lost.state,'uncertain');
     const displayBridge=f.service({...f.adapter,status:async run=>({...await f.adapter.status(run),decisions:{observedAt:new Date(now).toISOString(),gate:null}})});
     const visible=await displayBridge.status(f.identity,f.projectId,f.id);assert.equal(visible.display.canStart,false);
