@@ -71,7 +71,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { b8ExternalHostInventoryV1,b8HostGateCommandV1,validateB8ExternalHostTitlesV1 } from '../scripts/check-test-lane-coverage.mjs';
-import { runB8HostGateV1,b8P71CasesV1,b8U81CasesV1,validateB8ProductTapV1,executeB8HostChildV1 } from '../scripts/check-loop-selection-host-gate.mjs';
+import { runB8HostGateV1,b8P71CasesV1,b8U81CasesV1,validateB8ProductTapV1,executeB8HostChildV1,b8HostChildEnvironmentV1 } from '../scripts/check-loop-selection-host-gate.mjs';
 
 const expectedP71=['qualified fixture defaults','deterministic merged encoding','unknown model refusal'];
 const expectedU81=['ordinary eligible','bound acknowledged review','final builder refusal','manual refusal','chained refusal','recovery refusal',
@@ -208,4 +208,12 @@ test('B8 failed children report identity, exit state and bounded secret-filtered
     assert.doesNotMatch(output,/old stdout|old stderr|stdout 0\n|stderr 0\n|fixture-sensitive|PRIVATE KEY/);
     assert.ok(logs.at(-1).startsWith('HOST GATE FAIL:'));
   }
+});
+
+
+test('B8 tools environment binds required product checks to the qualified candidate',()=>{
+  const env=b8HostChildEnvironmentV1({PATH:'/usr/bin:/bin',A2_PRODUCT_ROOT:'/ambient-product',A2_REQUIRE_PRODUCT:'0',SECRET:'not-forwarded'},'/qualified-product');
+  assert.equal(env.A2_PRODUCT_ROOT,'/qualified-product','bridge must use the qualified candidate rather than a default sibling');
+  assert.equal(env.A2_REQUIRE_PRODUCT,'1','required product checks cannot become NOT RUN');
+  assert.equal(env.SECRET,undefined);
 });

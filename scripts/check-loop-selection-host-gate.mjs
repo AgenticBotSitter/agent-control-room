@@ -99,8 +99,9 @@ export async function executeB8HostChildV1(command,args,{cwd,env,timeoutMs}){
       stderr:new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(stderr)),cleaned:!descendants,failed};
   }finally{clearTimeout(timer);clearTimeout(killTimer);process.off('SIGINT',interrupt);process.off('SIGTERM',interrupt);}
 }
-function childEnvironment(input){
-  const env={PATH:input.PATH??'/usr/bin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',NODE_ENV:'test',CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1',npm_config_offline:'true'};
+export function b8HostChildEnvironmentV1(input,root){
+  const env={PATH:input.PATH??'/usr/bin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',NODE_ENV:'test',CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1',npm_config_offline:'true',
+    A2_PRODUCT_ROOT:resolve(root),A2_REQUIRE_PRODUCT:'1'};
   for(const key of ['CONTROL_ROOM_A2_TEST_LOOP','CR_PYTHON','CONTROL_ROOM_B8_PRODUCT_SHA','CONTROL_ROOM_B8_TOOLS_SHA',
     'CONTROL_ROOM_B8_INTERPRETER_SHA256','CONTROL_ROOM_B8_TOOLS_GATE_TIMEOUT_MS','CONTROL_ROOM_B8_QUALIFICATION_RECEIPT'])if(input[key])env[key]=input[key];
   return env;
@@ -127,7 +128,7 @@ export function productionB8HostPreflightV1(root=process.cwd(),input=process.env
     moduleSha256:hash(readFileSync(join(loop,'bridge/a2-contract.mjs'))),entrypointSha256:hash(readFileSync(join(loop,'bridge/cr-entry.py')))};
   need(Object.entries(immutable).every(([k,v])=>receipt[k]===v),'qualification receipt pins mismatch');
   const timeoutMs=Number(input.CONTROL_ROOM_B8_TOOLS_GATE_TIMEOUT_MS);need(Number.isSafeInteger(timeoutMs)&&timeoutMs>0&&timeoutMs<=86400000,'missing finite tools budget');
-  return {root,loop,python,inventory,pins,timeoutMs,env:childEnvironment(input)};
+  return {root,loop,python,inventory,pins,timeoutMs,env:b8HostChildEnvironmentV1(input,root)};
 }
 export async function runB8HostGateV1({preflight=productionB8HostPreflightV1,execute=executeB8HostChildV1,log=console.log}={}){
   try{
