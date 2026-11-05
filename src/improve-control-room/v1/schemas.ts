@@ -120,3 +120,109 @@ export type ImprovementRequestDraftV1 = z.infer<typeof improvementRequestDraftSc
 export type ImprovementDeskViewV1 = z.infer<typeof improvementDeskViewSchemaV1>;
 export type RecordUpdateCandidateV1 = z.infer<typeof recordUpdateCandidateSchemaV1>;
 export type UpdateCandidateViewV1 = z.infer<typeof updateCandidateViewSchemaV1>;
+
+// Loop records are independent of legacy pipeline requests. Preserve input bytes.
+const loopVersion = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const rawHash = z.string().regex(/^[a-f0-9]{64}$/);
+const loopDescription = z.string().min(1).max(8000).refine(value => value.trim().length > 0);
+const loopSettings = z.string().refine(value => {
+  if (new TextEncoder().encode(value).byteLength > 65536) return false;
+  try { const parsed: unknown = JSON.parse(value); return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed); }
+  catch { return false; }
+});
+export const loopImprovementDraftSchemaV1 = z.object({ description: loopDescription, settingsText: loopSettings }).strict();
+export const loopImprovementEditSchemaV1 = loopImprovementDraftSchemaV1.extend({ requestId: id, expectedVersion: loopVersion }).strict();
+export const loopImprovementRunIdentitySchemaV1 = z.object({ adapterId: id, loopRunId: id,
+  toolingRevision: digest, a2SchemaVersion: z.literal(1) }).strict();
+export const loopImprovementRunLinkSchemaV1 = z.object({ projectId: id, requestId: id,
+  initialInputVersion: loopVersion, run: loopImprovementRunIdentitySchemaV1 }).strict();
+export const loopImprovementStartSchemaV1 = z.object({ requestId: id, expectedVersion: loopVersion,
+  runLinkId: id, requestSha256: rawHash, settingsSha256: rawHash }).strict();
+export const loopImprovementConfirmationSchemaV1 = z.object({
+  path: z.string().min(1).max(512).regex(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*\\)[A-Za-z0-9._/-]+$/),
+  sha256: rawHash, at: z.string().datetime(), who: z.literal("owner"),
+  input_version: z.union([z.string().min(1).max(180), loopVersion]),
+}).strict();
+export const loopImprovementObservationSchemaV1 = z.object({
+  inputVersion: z.union([z.string().min(1).max(180), loopVersion]), settingsDigest: z.string().min(1).max(180),
+  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), confirmation: loopImprovementConfirmationSchemaV1,
+}).strict();
+export const loopImprovementRunViewSchemaV1 = loopImprovementRunIdentitySchemaV1.extend({
+  runLinkId: id, initialInputVersion: loopVersion,
+}).strict();
+export const loopImprovementRequestViewSchemaV1 = z.object({ requestId: id, projectId: id,
+  currentVersion: loopVersion, description: loopDescription, requestSha256: rawHash, settingsSha256: rawHash,
+  runLink: loopImprovementRunViewSchemaV1.nullable(), savedAuthorization: z.boolean(),
+  createdAt: z.string().datetime({ offset: true }), startsWork: z.literal(false), grantsDeployAuthority: z.literal(false),
+}).strict();
+export const loopImprovementDeskViewSchemaV1 = z.object({ legacy: improvementDeskViewSchemaV1,
+  loopRequests: z.array(loopImprovementRequestViewSchemaV1).max(100),
+}).strict();
+export type LoopImprovementRunIdentityV1 = z.infer<typeof loopImprovementRunIdentitySchemaV1>;
+export type LoopImprovementObservationV1 = z.infer<typeof loopImprovementObservationSchemaV1>;
+/** Reviewed server boundary only. It decodes actual A2 types and independently binds
+ * its observation to the effective bytes and the run's normalized current path.
+ * There is deliberately no dispatcher. Omission disables admission. */
+export type LoopImprovementContractV1 = {
+  toolingRevision: string;
+  decodeRunIdentity: (input: unknown) => LoopImprovementRunIdentityV1;
+  decodeObservation: (input: unknown) => LoopImprovementObservationV1;
+  matchesSavedInput: (run: LoopImprovementRunIdentityV1, observation: LoopImprovementObservationV1,
+    input: { description: string; settingsText: string; requestSha256: string; settingsSha256: string }) => boolean;
+};
+
+// B1b: browser input is closed; configured engine identity never comes from it.
+const engineRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const loopExpected = { expectedVersion: loopVersion, expectedRevision: engineRevision };
+export const loopBridgeOperationSchemaV1 = z.enum(["intake", "confirm", "start", "stop", "approve", "answer"]);
+export type LoopBridgeOperationV1 = z.infer<typeof loopBridgeOperationSchemaV1>;
+export const loopBridgeBodiesV1 = {
+  intake: z.object({ description: loopDescription }).strict(),
+  confirm: z.object({ ...loopExpected, requestSha256: rawHash, settingsSha256: rawHash }).strict(),
+  start: z.object({ ...loopExpected, runLinkId: id }).strict(),
+  stop: z.object({ runLinkId: id }).strict(),
+  approve: z.object({ ...loopExpected, step: z.enum(["plan", "spec"]),
+    inputVersion: z.union([loopVersion, z.string().min(1).max(180)]), head: revision, reportSha256: rawHash }).strict(),
+  answer: z.object({ ...loopExpected, questionId: id, inputVersion: z.union([loopVersion, z.string().min(1).max(180)]),
+    questionReportSha256: rawHash, text: loopDescription }).strict(),
+} as const;
+export const loopBridgeOutcomeSchemaV1 = z.object({
+  state: z.enum(["accepted", "waiting", "refused"]), revision: engineRevision,
+  adapterId: id, loopRunId: id, toolingRevision: digest,
+  evidenceDigest: digest, error: z.enum(["REFUSED", "INELIGIBLE"]).nullable(),
+}).strict();
+export const loopBridgeBindingSchemaV1 = z.object({
+  schemaVersion: z.literal(1), body: z.record(z.string(), z.unknown()), localVersion: loopVersion,
+  adapterId: id, loopRunId: id, toolingRevision: digest, a2SchemaVersion: z.literal(1), schemaDigest: digest,
+  requestSha256: rawHash, settingsSha256: rawHash,
+  runLinkId: id.nullable(), authorizationId: id.nullable(),
+  inputVersion: z.union([loopVersion, z.string().min(1).max(180)]).nullable(),
+  expectedRevision: engineRevision.nullable(), evidence: digest.nullable(),
+}).strict().refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65536);
+export type LoopBridgeBindingV1 = z.infer<typeof loopBridgeBindingSchemaV1>;
+export type LoopBridgeOutcomeV1 = z.infer<typeof loopBridgeOutcomeSchemaV1>;
+export const loopBridgeReceiptSchemaV1 = z.object({ schemaVersion: z.literal(1), requestId: id,
+  localVersion: loopVersion, commandId: id, state: z.enum(["accepted", "waiting", "refused", "uncertain"]),
+  replayed: z.boolean(), engineRevision: engineRevision.nullable(),
+  error: z.enum(["REFUSED", "INELIGIBLE", "LAUNCH_UNCERTAIN"]).nullable(),
+}).strict();
+
+
+// Product display only. Unknown engine evidence stays null, never guessed.
+export const loopImprovementStatusSchemaV1 = z.object({
+  schemaVersion: z.literal(1), projectId: id, requestId: id, localVersion: loopVersion,
+  description: loopDescription, requestSha256: rawHash, settingsSha256: rawHash, runLinkId: id.nullable(),
+  engineRevision: engineRevision.nullable(),
+  state: z.enum(["ready", "running", "waiting_approval", "waiting_question", "waiting_owner", "blocked", "stopped", "candidate_ready"]).nullable(),
+  startState: z.enum(["not_started", "dispatched", "started", "uncertain"]),
+  confirmationCurrent: z.boolean(), canStart: z.boolean(), canStop: z.boolean(),
+  progress: z.object({ stepId: z.string().min(1).max(180).nullable(), role: z.string().min(1).max(240).nullable(),
+    attempt: loopVersion.nullable(), requestedModel: z.string().min(1).max(240).nullable(),
+    observedModel: z.string().min(1).max(240).nullable(), identityVerified: z.boolean(),
+    repairCount: engineRevision.nullable() }).strict().nullable(),
+  attention: z.object({ code: z.string().min(1).max(100), message: z.string().min(1).max(1000),
+    nextAction: z.string().min(1).max(1000) }).strict().nullable(), observedAt: z.string().datetime(),
+}).strict();
+export type LoopImprovementStatusV1 = z.infer<typeof loopImprovementStatusSchemaV1>;
+export type LoopImprovementDeskViewV1 = z.infer<typeof loopImprovementDeskViewSchemaV1>;
+export type LoopImprovementRequestViewV1 = z.infer<typeof loopImprovementRequestViewSchemaV1>;

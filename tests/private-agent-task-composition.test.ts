@@ -1323,3 +1323,40 @@ test("mutable nested child under a non-plain shallow-frozen web tasks object is 
   assert.notEqual(originalKey[0], capturedKey[0],
     "sanity: caller mutation took effect on the trusted buffer; captured key is detached");
 });
+
+import { composePrivateTaskWorkerApplication } from "../src/web/v1/private-task-worker-application";
+import { createImproveControlRoomLoopRecoveryV1 } from "../src/web/v1/improve-control-room-loop-recovery";
+test("B3a composed recovery drains before shared adapter and pools even after cleanup failure",async()=>{
+  const order:string[]=[];
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,createCycle:()=>({tick(){},close:async()=>{order.push('cycle');throw Error('synthetic cleanup');}}),port:{scan:async()=>({targets:[],nextCursor:null}),reconcile:async()=>({state:'idle'})}});
+  worker.start();
+  const app=composePrivateTaskWorkerApplication({isReady:()=>true,handle:async()=>new Response('ok'),close:async()=>{order.push('adapter/pools');}},worker);
+  assert.equal(app.isReady(),true);await assert.rejects(app.close(),{message:'private_task_worker_cleanup_uncertain'});await assert.rejects(app.close(),{message:'private_task_worker_cleanup_uncertain'});
+  assert.deepEqual(order,['cycle','adapter/pools']);assert.equal(app.isReady(),false);
+});
+
+test('B3b monitoring tick is independent of roots and does not occupy recovery slots',async()=>{
+  let ticks=0,scans=0,closeCycle=0;
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,onTick:()=>{ticks++;},
+    createCycle:()=>({tick(){},close:async()=>{closeCycle++;}}),
+    port:{scan:async()=>{scans++;return{targets:[],nextCursor:null};},reconcile:async()=>{throw Error('no roots');}}});
+  worker.start();await worker.tick();assert.equal(ticks,1);assert.equal(scans,1);
+  await worker.tick();assert.equal(ticks,2);assert.equal(scans,2);
+  await worker.close();await worker.tick();assert.equal(ticks,2);assert.equal(closeCycle,1);
+});
+
+test('B3b real cycle keeps monitoring ticks during a held root scan',async()=>{
+  const {createPipelineAdvanceCycleV1}=await import('../src/web/v1/private-task-startup');
+  let pulse!:()=>void,release!:()=>void,ticks=0,scans=0;
+  const held=new Promise<void>(resolve=>{release=resolve;});
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,onTick:()=>{ticks++;},
+    createCycle:input=>createPipelineAdvanceCycleV1(input,{schedule:run=>{pulse=run;return 1;},clear:()=>{}}),
+    port:{scan:async()=>{scans++;await held;return{targets:[],nextCursor:null};},reconcile:async()=>{throw Error('no roots');}}});
+  try{
+    worker.start();await new Promise<void>(resolve=>setImmediate(resolve));
+    pulse();await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.equal(ticks,2,'B3b monitor receives the next five-second tick while scanning');
+    pulse();await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.equal(ticks,3);assert.equal(scans,1,'B3b held root scans never overlap');
+  }finally{release();await worker.close();}
+});

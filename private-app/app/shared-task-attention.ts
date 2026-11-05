@@ -4,23 +4,28 @@ import { useCallback, useSyncExternalStore } from "react";
 import { readAllTaskAttention, retainTaskAttentionPages, type TaskAttentionSourceState } from "../../src/web/v1/task-attention-source";
 import type { TaskAttentionPage } from "../../src/web/v1/task-attention-wire";
 import { readActionInboxSource, type ActionInboxSource, type ActionInboxSourceState } from "../../src/web/v1/action-inbox-browser-client";
+import { loopAttentionComplete, loopAttentionUnknown } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { buildActionInbox, type ActionInboxDisplayItem } from "../../src/web/v1/action-inbox";
 
-export type SharedAttentionValue = { items: ActionInboxDisplayItem[]; complete: boolean; checking?: boolean };
+export type SharedAttentionValue = { items: ActionInboxDisplayItem[]; complete: boolean; checking?: boolean; unknown?: boolean; uninspected?: boolean };
 export type SharedInboxData = { tasks: TaskAttentionSourceState; operator: ActionInboxSourceState };
-type Attention = { state: "loading" } | { state: "unavailable"; data?: SharedInboxData } | { state: "ready"; value: SharedAttentionValue; data: SharedInboxData };
+type Attention = { state: "loading" } | { state: "unavailable"; accessLost?: boolean; data?: SharedInboxData } | { state: "ready"; value: SharedAttentionValue; data: SharedInboxData };
 const loading: Attention = { state: "loading" };
 let snapshot: Attention = loading;
 let previousPages: TaskAttentionPage[] = [];
 let previousSource: ActionInboxSource | undefined;
+const operatorAccessLost = (code: string) => ["authentication_required", "access_denied"].includes(code);
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let request: AbortController | undefined;
+let refreshAgain = false;
 
 /** One visible-page read shared by Home and every header. Never carry a
  * previous installation's snapshot across the last subscriber's unmount. */
-export async function refreshSharedTaskAttention() {
-  if (!listeners.size || document.hidden || request) return;
+export async function refreshSharedTaskAttention(afterCurrent = false) {
+  if (!listeners.size || document.hidden) return;
+  // Keep one follow-up read when a status change arrives during a shared read.
+  if (request) { if (afterCurrent) refreshAgain = true; return; }
   clearTimeout(timer);
   const controller = new AbortController();
   request = controller;
@@ -34,7 +39,7 @@ export async function refreshSharedTaskAttention() {
     });
     const clearAccess = (code: "authentication_required" | "access_denied") => {
       if (controller.signal.aborted) return;
-      previousPages = []; previousSource = undefined; snapshot = { state: "unavailable", data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
+      previousPages = []; previousSource = undefined; snapshot = { state: "unavailable", accessLost: true, data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
       for (const notify of listeners) notify();
     };
     const taskRead = readAllTaskAttention(transport, controller.signal).then(tasks => {
@@ -42,17 +47,17 @@ export async function refreshSharedTaskAttention() {
       return tasks;
     });
     const operatorRead = readActionInboxSource(transport).then(operator => {
-      if (operator.state === "unavailable" && operator.code === "authentication_required") clearAccess(operator.code);
+      if (operator.state === "unavailable" && operatorAccessLost(operator.code)) clearAccess(operator.code as "authentication_required" | "access_denied");
       return operator;
     });
     const [tasks, operator] = await Promise.all([taskRead, operatorRead]);
     if (!controller.signal.aborted) {
       const accessLost = tasks.state === "unavailable" && tasks.code !== "unavailable"
-        || operator.state === "unavailable" && operator.code === "authentication_required";
+        || operator.state === "unavailable" && operatorAccessLost(operator.code);
       if (accessLost) {
         previousPages = []; previousSource = undefined;
-        const code = tasks.state === "unavailable" && tasks.code === "access_denied" ? "access_denied" : "authentication_required";
-        snapshot = { state: "unavailable", data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
+        const code = tasks.state === "unavailable" && tasks.code === "access_denied" || operator.state === "unavailable" && operator.code === "access_denied" ? "access_denied" : "authentication_required";
+        snapshot = { state: "unavailable", accessLost: true, data: { tasks: { state: "unavailable", code, pages: [] }, operator: { state: "unavailable", code } } };
       } else {
         previousPages = tasks.state === "available" ? tasks.pages
           : tasks.state === "unavailable" ? retainTaskAttentionPages(previousPages, tasks.pages) : previousPages;
@@ -61,13 +66,19 @@ export async function refreshSharedTaskAttention() {
         const operatorAbsent = operator.state === "unavailable" && operator.code === "not_configured";
         previousSource = operator.state === "available" ? operator.source
           : operator.state === "unavailable" && (operator.code === "access_denied" || operatorAbsent) ? undefined : previousSource;
-        const items = buildActionInbox(previousPages, previousSource?.items);
+        const loop = previousSource?.loop;
+        const items = buildActionInbox(previousPages, previousSource?.items, Date.now(), loop?.state === "available" ? loop.items : []);
+        const freshTaskIds = new Set(tasks.state === "unavailable" ? tasks.pages.flatMap(page => page.items.map(item => item.task.jobId)) : []);
+        const taskCountUnknown = tasks.state === "unavailable" && (!tasks.pages.length
+          || previousPages.some(page => page.items.some(item => !freshTaskIds.has(item.task.jobId))));
+        const unknown = taskCountUnknown || operator.state === "unavailable" && !operatorAbsent || loopAttentionUnknown(loop);
+        const uninspected = loop?.state === "available" && loop.truncated;
         const complete = tasks.state === "available" && !tasks.truncated
-          && (operator.state === "available" && !operator.source.truncated || operatorAbsent);
+          && (operator.state === "available" && !operator.source.truncated && loopAttentionComplete(operator.source.loop) || operatorAbsent);
         const data: SharedInboxData = { tasks: tasks.state === "unavailable" ? { ...tasks, pages: previousPages } : tasks,
           operator: operator.state === "unavailable" ? { ...operator, ...(previousSource ? { source: previousSource } : {}) } : operator };
         snapshot = !items.length && (tasks.state === "unavailable" || operator.state === "unavailable" && !operatorAbsent)
-          ? { state: "unavailable", data } : { state: "ready", value: { items, complete }, data };
+          ? { state: "unavailable", data } : { state: "ready", value: { items, complete, unknown, uninspected }, data };
       }
     }
   } catch {
@@ -76,7 +87,8 @@ export async function refreshSharedTaskAttention() {
     if (request === controller) {
       request = undefined;
       for (const notify of listeners) notify();
-      if (listeners.size) timer = setTimeout(onVisible, 30_000);
+      if (listeners.size && refreshAgain) { refreshAgain = false; queueMicrotask(onVisible); }
+      else if (listeners.size) timer = setTimeout(onVisible, 30_000);
     }
   }
 }
@@ -92,7 +104,7 @@ function subscribe(notify: () => void) {
     listeners.delete(notify);
     if (!listeners.size) {
       clearTimeout(timer); request?.abort(); request = undefined; snapshot = loading;
-      previousPages = []; previousSource = undefined;
+      previousPages = []; previousSource = undefined; refreshAgain = false;
       window.removeEventListener("focus", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
     }

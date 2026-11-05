@@ -1,3 +1,8 @@
+import { finalizationEnabledV1 } from "./improve-control-room-loop-finalization";
+import { type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
+import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1 } from "./improve-control-room-loop-service";
+import { createImproveControlRoomLoopRecoveryV1 } from "./improve-control-room-loop-recovery";
+import { captureLoopRecoveryCapabilityV1, createImproveControlRoomLoopAdapterV1, type LoopAdapterConfigurationV1 } from "./improve-control-room-loop-adapter";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
@@ -93,6 +98,7 @@ function requireReadyLocalHermesInstallation(web: ReturnType<typeof validatePriv
 }
 
 export type PrivateTaskStartupConfiguration = {
+  loopBridge?: { integrityKey: Uint8Array; adapter: LoopAdapterConfigurationV1 };
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
   /** Explicit, existing local artifact directory for the agent-task composition. */
@@ -317,7 +323,19 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if ([web.database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV2(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
-    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
+    // A split loop key would fail every loop desk read of legacy rows.
+    const loopKey = input.loopBridge ? key(input.loopBridge.integrityKey) : undefined;
+    if (loopKey && pipelines && !loopKeyMatchesLegacyKeyV1(loopKey, pipelines.integrityKey)) throw new Error();
+    const recoveryCapability = captureLoopRecoveryCapabilityV1(input.loopBridge?.adapter.contract.recovery);
+    const loopRecovery = recoveryCapability ? { enabled: recoveryCapability.enabled } : undefined;
+    const loopBridge:LoopBridgeConfigurationV1|undefined = input.loopBridge ? { integrityKey: loopKey!,
+      adapter: createImproveControlRoomLoopAdapterV1(input.loopBridge.adapter) } : undefined;
+    if(loopBridge?.adapter.finalization && finalizationEnabledV1(loopBridge.adapter.finalization)) {
+      const capability=loopBridge.adapter.finalization;
+      loopBridge.loopCandidates=Object.freeze({integrityKey:loopBridge.integrityKey,contract:loopBridge.adapter.contract,
+        schemaDigest:loopBridge.adapter.schemaDigest,source:capability.source,repository:capability.repository});
+    }
+    return { loopBridge, loopRecovery, web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,pipelines,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
       claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
@@ -387,6 +405,7 @@ export function createPrivateTaskBootstrap(dependencies: {
     let application: Awaited<ReturnType<typeof createPrivateTaskApplication>> | undefined;
     let worker: OwnedQueueWorker | undefined;
     let newsWorker: OwnedQueueWorker | undefined;
+    let recoveryWorker: ReturnType<typeof createImproveControlRoomLoopRecoveryV1> | undefined;
     let newsSubmission: Awaited<ReturnType<typeof preparePgBossNewsFeedSubmission>> | undefined;
     let newsIntegration: ReturnType<typeof createNewsDiscoveryIntegration> | undefined;
     const newsCloses: (() => Promise<void>)[] = [];
@@ -600,6 +619,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(hermesDeliveryRecovery ? { hermesDeliveryRecovery } : {}),
         ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}) }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
+        ...(config.loopBridge ? { loopBridge: config.loopBridge } : {}),
         ...(config.pipelines?{workBatches:{integrityKey:config.pipelines.integrityKey}}:{}),
         coordination: { store: coordinationStore },
         ...(webTasks ? { tasks: webTasks } : {}),
@@ -681,6 +701,26 @@ export function createPrivateTaskBootstrap(dependencies: {
         if (typeof prepared.raw.status !== "function") throw new Error();
         newsWorker = Object.freeze({ close: prepared.close, status: prepared.raw.status.bind(prepared.raw) });
       }
+      // Recovery uses the same verified web client/key/adapter. This service
+      // instance owns no pool or adapter lifecycle and never closes either.
+      let recoveryEnabled = false;
+      try { recoveryEnabled = config.loopRecovery?.enabled() === true; } catch { /* Default off. */ }
+      if (config.loopBridge && (recoveryEnabled || finalizationEnabledV1(config.loopBridge.adapter.finalization))) {
+        const recoveryService = new ImproveControlRoomLoopServiceV1(web.client,
+          { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, config.loopBridge, clock);
+        const recovery = createImproveControlRoomLoopRecoveryV1({ port: recoveryService.recoveryPort(),
+          enabled: ()=>{let recovery=false;try{recovery=config.loopRecovery?.enabled()===true;}catch{/* Default off. */}
+            return recovery||finalizationEnabledV1(config.loopBridge!.adapter.finalization);},
+          observe:recoveryService.finalizationPort().observe, onTick: config.loopBridge.adapter.monitoringTick, createCycle: createPipelineAdvanceCycleV1 });
+        let recoveryClose: Promise<void> | undefined;
+        recoveryWorker = Object.freeze({ ...recovery, close: () => recoveryClose ??= (async () => {
+          // The same adapter owns collection. Drain it before application/pools,
+          // including when recovery itself could not confirm cleanup.
+          const driver = await Promise.allSettled([recovery.close()]);
+          const adapter = await Promise.allSettled([config.loopBridge!.adapter.close()]);
+          if ([...driver, ...adapter].some(result => result.status === "rejected")) throw new Error("loop_recovery_cleanup_uncertain");
+        })() });
+      }
       const readyApplication = application;
       let pipelineCycle:ReturnType<typeof createPipelineAdvanceCycleV1>|undefined;
       if(config.pipelines?.advance){
@@ -703,12 +743,13 @@ export function createPrivateTaskBootstrap(dependencies: {
             throw new Error("private_task_startup_cleanup_uncertain");
         })(),
       } : cycledApplication;
-      const workers = [worker, newsWorker].filter((value): value is OwnedQueueWorker => !!value);
+      const workers = [worker, newsWorker, recoveryWorker].filter((value): value is OwnedQueueWorker => !!value);
       const installed = workers.length ? composePrivateTaskWorkerApplication(ownedApplication, workers) : ownedApplication;
       requireActive();
       if (!installed.isReady()) throw new Error();
       dependencies.install(installed);
       requireActive();
+      recoveryWorker?.start();
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: installed.isReady, close: installed.close,
         ...(artifactStorage && artifactInventory ? { artifactStorage: Object.freeze({
@@ -731,13 +772,14 @@ export function createPrivateTaskBootstrap(dependencies: {
     } catch {
       abandoned = true;
       startupAbort.abort();
-      const workerCleanup = await Promise.allSettled([worker, newsWorker].filter((value): value is OwnedQueueWorker => !!value).map(value => value.close()));
+      const workerCleanup = await Promise.allSettled([worker, newsWorker, recoveryWorker].filter((value): value is OwnedQueueWorker => !!value).map(value => value.close()));
       const appCleanup = application ? await Promise.allSettled([application.close()]) : [];
+      const adapterCleanup = await Promise.allSettled(capturedConfig.loopBridge ? [capturedConfig.loopBridge.adapter.close()] : []);
       const producerCleanup = submission ? await Promise.allSettled([submission.close()]) : [];
       const runtimeCleanup = closeIdeaRuntime ? await Promise.allSettled([closeIdeaRuntime()]) : [];
       const newsCleanup = await Promise.allSettled(newsCloses.map(close => close()));
       const results = await Promise.allSettled(acquired.map(pool => pool.close()));
-      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...runtimeCleanup, ...newsCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
+      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...adapterCleanup, ...producerCleanup, ...runtimeCleanup, ...newsCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
       throw new Error("private_task_startup_prerequisites_failed");
     } finally { signal?.removeEventListener("abort", cancelStartup); }
   } });

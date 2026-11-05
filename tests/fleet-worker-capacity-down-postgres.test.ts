@@ -121,7 +121,18 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 //     real PostgreSQL 17 from that tree, gives the value below (was 78e43fc8...).
 // 10.0300 adds durable owner-push completion. Measured as the production web
 // login after the full ledger and0234 down;0300 down recovers the prior release.
-const PRE_0234_DIGEST = "2725341d4abf53506ecb8a6649be897f7b4c87ce4fcb885dfd9711d101db7445";
+// 11.0301 adds loop lineage and 0302 adds its command journal; both remain after
+// 0234 down. Measured on PostgreSQL 17: removing 0302 gives 9b00f067..., then
+// removing 0301 recovers the prior pin 2725341d... exactly. Reapplying each
+// restores those same intermediate and full-stack digests.
+// 12.0303-0305 add and refine retained loop candidates after 0234. Measured on
+// PostgreSQL 17: removing only 0305, 0304 and 0303 after 0234's down recovers
+// the previous b016362f... pin exactly; replaying them recovers this value.
+// 13.0307 adds optional review identity validation and 0308 validates the check
+// introduced as NOT VALID in 0305. On PostgreSQL 17, undoing 0308 and 0307
+// and validating the restored 0305 constraint recovers e07286aa... exactly.
+// Replaying 0307 and 0308 recovers the pin below; 0234's round trip is unchanged.
+const PRE_0234_DIGEST = "41d09ffffe474b6da71a6e9927586ec11d4be6e79912fcf2cc240b20933cb4be";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

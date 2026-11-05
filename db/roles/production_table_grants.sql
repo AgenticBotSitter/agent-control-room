@@ -193,3 +193,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM control_r
 -- work_batches or work_intake_tenant_binding.
 GRANT EXECUTE ON FUNCTION work_intake_split_suggestion_visible(text, text, text)
   TO control_room_work_intake;
+
+-- Owner request/settings bytes are private, including from backup/shared readers.
+REVOKE ALL ON control_loop_improvement_requests, control_loop_improvement_inputs,
+  control_loop_improvement_run_links, control_loop_improvement_authorizations
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake, control_room_backup;
+
+REVOKE ALL ON control_loop_improvement_commands FROM control_room_application, control_room_reader,
+  control_room_schedule_admissions, control_room_github_broker, control_room_work_intake, control_room_backup;
+
+REVOKE ALL ON control_loop_update_candidates, control_loop_update_candidate_decisions FROM control_room_application,
+  control_room_reader, control_room_schedule_admissions, control_room_github_broker, control_room_work_intake, control_room_backup;

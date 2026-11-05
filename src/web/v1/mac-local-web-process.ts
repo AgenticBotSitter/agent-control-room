@@ -1,3 +1,6 @@
+import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
+import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ownerPushLinkV1 } from "../../web-push/v1/policy";
 import { localOwnerSignInTargetV1 } from "./local-owner-session";
 import { randomUUID } from "node:crypto";
@@ -60,6 +63,8 @@ import { updaterOwnerAttentionRequestSchemaV1, updaterOwnerRequestSchemaV1,
   type UpdaterOwnerAttentionPortV1, type UpdaterOwnerUiPortV1 } from "./updater-owner-ui-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
+  loopBridge?: LoopBridgeConfigurationV1 & { loopCandidates?: LoopCandidateConfigurationV1 };
+  loopCandidates?: LoopCandidateConfigurationV1;
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
   /** The one remote origin behind Cloudflare Access, if configured. Its
@@ -216,6 +221,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // same in-session proposal service. Refuse a partial composition instead of
   // mounting a review that succeeds for ordinary accepts but cannot follow up.
   if (options.ownerReviews && !options.taskService) throw new Error("mac_local_web_process_config_invalid");
+  // A split loop key would fail every loop desk read of legacy rows.
+  if (options.loopBridge && options.workBatchIntegrityKey
+    && !loopKeyMatchesLegacyKeyV1(options.loopBridge.integrityKey, options.workBatchIntegrityKey)) throw new Error("mac_local_web_process_config_invalid");
+  if (options.loopCandidates && options.workBatchIntegrityKey
+    && !loopKeyMatchesLegacyKeyV1(options.loopCandidates.integrityKey, options.workBatchIntegrityKey)) throw new Error("mac_local_web_process_config_invalid");
   if (options.hostProcessId !== undefined
     && (!Number.isSafeInteger(options.hostProcessId) || options.hostProcessId <= 1))
     throw new Error("mac_local_web_process_config_invalid");
@@ -307,10 +317,18 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // owns the run rows it reads.
   const pipelineHttp = pipelines && pipelineAdvance ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: pipelines, advance: pipelineAdvance, clock }) : undefined;
+  const candidateConfiguration = resolveLoopCandidateConfigurationV1(options.loopCandidates, options.loopBridge);
+  const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
+    candidateConfiguration.contract, candidateConfiguration) : undefined;
+  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
-  const improvementHttp = improvementDesk ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
-    localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
+  const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: loopCandidateDesk, clock }) : undefined;
+  const improvementHttp = improvementDesk || loopBridge ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: improvementDesk, loopBridge, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
   // The Workers page's bot/model scorecard. Built here, from this installation's
@@ -763,13 +781,21 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/action-items") {
-        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-        if (!options.actionInboxSource) throw new WebAccessError("not_found");
+        if (request.method !== "GET" || url.search || request.body) throw new WebAccessError("invalid_request");
+        if (!options.actionInboxSource && !loopBridge) throw new WebAccessError("not_found");
         const owner = await tasks.authorizeActionInbox(identity);
         const now = new Date(clock()).toISOString();
-        const source = await options.actionInboxSource.read({ tenantId: profile.tenantId,
-          actorId: owner.actorId, grantedAt: owner.grantedAt, now });
-        return Response.json(source, { headers: privateResponseHeaders });
+        const source = options.actionInboxSource ? await options.actionInboxSource.read({ tenantId: profile.tenantId,
+          actorId: owner.actorId, grantedAt: owner.grantedAt, now }) : { observedAt: now, items: [], truncated: false };
+        let loop;
+        if (loopBridge) {
+          try { loop = await loopBridge.readAttention(identity); }
+          catch (error) {
+            if (error instanceof WebAccessError && ["authentication_required", "access_denied"].includes(error.code)) throw error;
+            loop = { schemaVersion: 1, state: "unavailable", code: "unavailable" };
+          }
+        }
+        return Response.json({ ...source, ...(loop ? { loop } : {}) }, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/pipelines") {
         if (request.method !== "GET" || url.search || !workBatches) throw new WebAccessError("not_found");
@@ -838,9 +864,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (isLoopCandidateRouteV1(url.pathname)) {
+        if (!loopCandidateHttp) throw new WebAccessError("not_found");
+        return loopCandidateHttp(request);
+      }
       if (improvementHttp && (url.pathname === "/api/v1/update-candidates"
         || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
-        || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname))) return improvementHttp(request);
+        || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)
+        || !!loopBridge && /^\/api\/v1\/projects\/[^/]+\/improvements\/loop\//.test(url.pathname))) return improvementHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
@@ -871,5 +902,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // is the failure this whole branch is about.
   return Object.freeze({ handle,
     isReady: () => closed === undefined && options.database.isAvailable(),
-    close: () => closed ??= options.database.close() });
+    close: () => closed ??= (async () => { await loopBridge?.close(); await options.database.close(); })() });
 }

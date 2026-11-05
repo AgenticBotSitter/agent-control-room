@@ -76,6 +76,9 @@ const DELIBERATE_REFUSALS = Object.freeze({
   "0186_recurring_rules_and_reusable_skills.sql": "0246 adds a foreign key onto control_skills (control_skill_create_actions)",
   "0206_result_file_catalog.sql": "0208-0212 all add foreign keys onto control_result_files",
   "0212_text_copy_derivations.sql": "0213's two read views are built over control_text_copy_derivations",
+  // 0303 retains candidates bound to 0301's inputs and run links. Dropping
+  // 0301 alone must refuse while those later foreign keys remain installed.
+  "0301_control_loop_improvement_lineage.sql": "0303 adds foreign keys onto control_loop_improvement_inputs and control_loop_improvement_run_links",
 });
 
 test("every db/down file is either runnable on a full install, or named here as a deliberate refusal",
@@ -88,7 +91,7 @@ test("every db/down file is either runnable on a full install, or named here as 
     for (const named of Object.keys(DELIBERATE_REFUSALS)) {
       assert.ok(files.has(named), `${named} is named as a deliberate refusal but db/down/${named} does not exist`);
     }
-    assert.equal(Object.keys(DELIBERATE_REFUSALS).length, 11,
+    assert.equal(Object.keys(DELIBERATE_REFUSALS).length, 12,
       "the count of deliberate refusals changed. That is a design change: say why in this file, and add or remove the entry, rather than letting the list drift from what the sweep observes.");
 
     await withRealPostgres(async postgres => {

@@ -1,3 +1,4 @@
+import { pgCtlInvocationV1 } from "../../../src/pg-runtime/v1/pg-path-quoting.mjs";
 // Local rehearsal database: a throwaway PostgreSQL 17 cluster on 127.0.0.1 with the full
 // migration ledger, the five Mac-local roles, and a protected root pointing at it.
 // Never points at the VPS. Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
@@ -56,7 +57,10 @@ if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
 const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 const pg = join(dir, "pg");
 const bounded = { env, stdio: "ignore" as const, timeout: 120_000, killSignal: "SIGKILL" as const };
-const pgctl = (...args: string[]) => execFileSync(pgExecutable("pg_ctl"), ["-D", pg, ...args], bounded);
+const pgctl = (...args: string[]) => {
+  const invocation = pgCtlInvocationV1(["-D", pg, ...args], env, pgExecutable("postgres"));
+  return execFileSync(pgExecutable("pg_ctl"), invocation.args, { ...bounded, env: invocation.environment });
+};
 
 // The shared teardown, created BEFORE initdb. That ordering is the fix.
 //

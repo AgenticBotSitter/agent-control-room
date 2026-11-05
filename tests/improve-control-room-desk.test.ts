@@ -1,4 +1,14 @@
 import assert from "node:assert/strict";
+import { ImproveControlRoomLoopServiceV1 } from "../src/web/v1/improve-control-room-loop-service";
+import { createHash } from "node:crypto";
+import { sha256Digest } from "../src/security";
+import { readPrivateWebSchemaDigest, privateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
+import { createInjectedPrivateFixturePreparation, fixtureMigratorScopeDigest } from "../src/web/v1/private-fixture-preparation";
+import { rehearsalScopeDigest } from "../src/web/v1/private-database-rehearsal";
+import type { createPrivatePostgresDatabase } from "../src/web/v1/private-postgres";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import { loopImprovementRunIdentitySchemaV1, loopImprovementObservationSchemaV1,
+  type LoopImprovementContractV1 } from "../src/improve-control-room/v1/schemas";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +23,7 @@ import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
 import { createImproveControlRoomHttpHandlerV1 } from "../src/web/v1/improve-control-room-http";
 import { bindCandidatePublisherToPipelineAdvanceV1 } from "../src/web/v1/task-coordinator-lifecycle";
 import { taskFixture } from "./helpers/web-task";
-import { now, origin, request as webRequest, trust } from "./helpers/web-foundation";
+import { now, origin, request as webRequest, token as webToken, trust } from "./helpers/web-foundation";
 import { ImprovementRequestForm } from "../private-app/app/improve-control-room-workspace";
 import { UpdateCandidatesHome, UpdateCandidatesPanel } from "../private-app/app/update-candidates-home";
 
@@ -468,4 +478,377 @@ test("desk UI labels worker selection and keeps deployment inactive", () => {
   assert.match(home, />Accept</); assert.match(home, />Decline</);
   assert.match(home, /Deploy and restart are not active/);
   assert.doesNotMatch(home, /deploy now|restart now|install/i, "no control on the card starts a deployment");
+});
+
+test("B1a draft saves without dispatch", async t => {
+  const f = await deskFixture(); t.after(() => void f.db.close());
+  assert.equal(typeof (f.desk as unknown as Record<string, unknown>).saveLoopDraft, "function",
+    "B1a persistence method exists");
+  const description = "  Keep exact request bytes.\n", settingsText = '{ "fixture": true }\n';
+  const saved = await f.desk.saveLoopDraft(f.identity, f.project.projectId, { description, settingsText }, "loop-draft-test-0001");
+  assert.equal(saved.request.description, description);
+  assert.equal(saved.request.currentVersion, 1);
+  assert.equal(saved.request.startsWork, false);
+  const rows = (await f.db.query<{ description: string; settings_text: string }>(
+    "SELECT description,settings_text FROM control_loop_improvement_inputs")).rows;
+  assert.deepEqual(rows, [{ description, settings_text: settingsText }]);
+  for (const table of ["pipeline_runs", "work_items", "control_native_task_queue", "control_improvement_requests"]) {
+    assert.equal((await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n, 0,
+      `B1a draft creates no ${table}`);
+  }
+});
+
+// SYNTHETIC boundary only: not an implemented or production A2 pin.
+const syntheticLoopPin = `sha256:${"7".repeat(64)}`;
+const syntheticRawHash = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
+const syntheticLoopContract: LoopImprovementContractV1 = {
+  toolingRevision: syntheticLoopPin,
+  decodeRunIdentity: value => {
+    const run = loopImprovementRunIdentitySchemaV1.parse(value);
+    assert.match(run.loopRunId, /^synthetic-run-[0-9]+$/u);
+    assert.equal(run.adapterId, "synthetic-adapter");
+    return run;
+  },
+  decodeObservation: value => {
+    const observed = loopImprovementObservationSchemaV1.parse(value);
+    assert.equal(typeof observed.inputVersion, "string");
+    assert.match(String(observed.inputVersion), /^SYNTHETIC:[0-9]+$/u);
+    assert.equal(typeof observed.confirmation.input_version, "string");
+    return observed;
+  },
+  matchesSavedInput: (run, observation, input) => observation.settingsDigest === `synthetic-sha256:${syntheticRawHash(input.settingsText)}`
+    && observation.confirmation.path === `work/docs/${run.loopRunId}.md`
+    && observation.confirmation.sha256 === syntheticRawHash(input.description),
+};
+const syntheticRun = (n = 1) => ({ adapterId: "synthetic-adapter", loopRunId: `synthetic-run-${n}`,
+  toolingRevision: syntheticLoopPin, a2SchemaVersion: 1 as const });
+const syntheticObservation = (description: string, settingsText: string) => ({ inputVersion: "SYNTHETIC:9",
+  settingsDigest: `synthetic-sha256:${syntheticRawHash(settingsText)}`, revision: 12,
+  confirmation: { path: "work/docs/synthetic-run-1.md", sha256: syntheticRawHash(description),
+    at: "2026-09-04T12:00:00.000Z", who: "owner" as const, input_version: "SYNTHETIC:9" } });
+async function loopFixture() {
+  const f = await deskFixture(); let attemptedWrites = 0, instantiated = 0;
+  const trace = (tx: DatabaseSession): DatabaseSession => ({ query: (sql, params) => {
+    if (/INSERT INTO control_loop_improvement_/u.test(sql)) attemptedWrites += 1;
+    return tx.query(sql, params);
+  } });
+  const client: DatabaseClient = { query: (sql, params) => f.client.query(sql, params),
+    transaction: work => f.client.transaction(tx => work(trace(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(trace(tx)), check) };
+  const desk = new ImproveControlRoomDeskServiceV1(client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
+    { instantiate: async () => { instantiated += 1; throw new Error("unexpected_dispatch"); } }, () => now, syntheticLoopContract);
+  const draft = { description: "  Exact owner request.\n", settingsText: '{ "fixture": "SYNTHETIC" }\n' };
+  const saved = await desk.saveLoopDraft(f.identity, f.project.projectId, draft, "loop-fixture-save-0001");
+  const linkInput = { projectId: f.project.projectId, requestId: saved.request.requestId, initialInputVersion: 1, run: syntheticRun() };
+  const linked = await desk.recordLoopRunLink(linkInput);
+  const start = { requestId: saved.request.requestId, expectedVersion: 1, runLinkId: linked.runLink.runLinkId,
+    requestSha256: syntheticRawHash(draft.description), settingsSha256: syntheticRawHash(draft.settingsText) };
+  return { ...f, desk, client, draft, saved, linked, linkInput, start,
+    observation: syntheticObservation(draft.description, draft.settingsText), writes: () => attemptedWrites, dispatches: () => instantiated };
+}
+
+test("B1a byte hashes, immutable history, exact replay and edit-away-and-back authorization invalidation", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
+  assert.equal(f.saved.request.requestSha256, syntheticRawHash(f.draft.description));
+  assert.equal(f.saved.request.settingsSha256, syntheticRawHash(f.draft.settingsText));
+  assert.equal((await f.desk.viewLoopDesk(f.identity, projectId)).loopRequests[0]!.savedAuthorization, false);
+  assert.deepEqual((await f.desk.viewLoopDesk(f.identity, projectId)).legacy, await f.desk.view(f.identity, projectId));
+  const replay = await f.desk.saveLoopDraft(f.identity, projectId, f.draft, "loop-fixture-save-0001");
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.request, { ...f.saved.request, runLink: f.linked.runLink });
+  await assert.rejects(f.desk.saveLoopDraft(f.identity, projectId, { ...f.draft, description: "changed" }, "loop-fixture-save-0001"), /conflict/u);
+  assert.equal((await f.desk.recordLoopRunLink(f.linkInput)).replayed, true);
+  await assert.rejects(f.desk.recordLoopRunLink({ ...f.linkInput, run: syntheticRun(2) }), /conflict/u);
+  const authorized = await f.desk.authorizeLoopStart(f.identity, projectId, f.start, "loop-start-test-0001", f.observation);
+  assert.equal(authorized.startsWork, false);
+  assert.equal((await f.desk.authorizeLoopStart(f.identity, projectId, f.start, "loop-start-test-0001", f.observation)).replayed, true);
+  await assert.rejects(f.desk.authorizeLoopStart(f.identity, projectId, f.start, "loop-start-test-0001",
+    { ...f.observation, revision: 13 }), /conflict/u);
+  await assert.rejects(f.desk.authorizeLoopStart(f.identity, projectId, f.start, "loop-start-test-0002", f.observation), /conflict/u);
+  assert.equal((await f.desk.viewLoopDesk(f.identity, projectId)).loopRequests[0]!.savedAuthorization, true);
+  const edit = { requestId: f.start.requestId, expectedVersion: 1, description: "Edited request.", settingsText: f.draft.settingsText };
+  const revised = await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-edit-test-0001");
+  assert.equal(revised.request.currentVersion, 2); assert.equal(revised.request.savedAuthorization, false);
+  assert.deepEqual(revised.request.runLink, f.linked.runLink);
+  assert.equal((await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-edit-test-0001")).replayed, true);
+  await assert.rejects(f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-edit-test-0002"), /conflict/u);
+  const back = await f.desk.reviseLoopDraft(f.identity, projectId, { ...edit, ...f.draft, expectedVersion: 2 }, "loop-edit-test-0003");
+  assert.equal(back.request.currentVersion, 3); assert.equal(back.request.savedAuthorization, false);
+  assert.equal(back.request.requestSha256, f.start.requestSha256);
+  await assert.rejects(f.desk.authorizeLoopStart(f.identity, projectId, f.start, "loop-start-test-0001", f.observation), /conflict/u);
+  for (const [table, expected] of [["requests", 1], ["inputs", 3], ["run_links", 1], ["authorizations", 1]] as const)
+    assert.equal((await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM control_loop_improvement_${table}`)).rows[0]!.n, expected);
+  assert.equal(f.dispatches(), 0);
+  for (const table of ["pipeline_runs", "work_items", "control_native_task_queue"])
+    assert.equal((await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n, 0);
+  assert.doesNotMatch(JSON.stringify(await f.desk.viewLoopDesk(f.identity, projectId)), /settingsText|settings_text|auth_tag|start_key|confirmation|SYNTHETIC:9/u);
+});
+
+test("B1a historical save and edit replays project the current authorized input", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
+  const edit = { requestId: f.start.requestId, expectedVersion: 1,
+    description: "Second saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 2 }\n' };
+  await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-0001");
+  const latest = { description: "Third saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 3 }\n' };
+  await f.desk.reviseLoopDraft(f.identity, projectId, { requestId: f.start.requestId, expectedVersion: 2, ...latest },
+    "loop-replay-edit-0002");
+  await f.desk.authorizeLoopStart(f.identity, projectId, { ...f.start, expectedVersion: 3,
+    requestSha256: syntheticRawHash(latest.description), settingsSha256: syntheticRawHash(latest.settingsText) },
+  "loop-replay-start-0001", syntheticObservation(latest.description, latest.settingsText));
+  const writes = f.writes();
+  const current = (await f.desk.viewLoopDesk(f.identity, projectId)).loopRequests[0]!;
+  assert.equal(current.currentVersion, 3); assert.equal(current.savedAuthorization, true);
+  for (const [replay, version, original] of [
+    [await f.desk.saveLoopDraft(f.identity, projectId, f.draft, "loop-fixture-save-0001"), 1, f.draft],
+    [await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-0001"), 2, edit],
+  ] as const) {
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.request, current, "B1a historical replay returns current version, bytes, hashes and authorization");
+    assert.deepEqual(replay.savedInput, { version, description: original.description,
+      requestSha256: syntheticRawHash(original.description), settingsSha256: syntheticRawHash(original.settingsText) });
+    assert.doesNotMatch(JSON.stringify(replay), /settingsText|settings_text|auth_tag|start_key|confirmation/u);
+  }
+  assert.equal(f.writes(), writes, "historical replay appends no records");
+  const next = await f.desk.reviseLoopDraft(f.identity, projectId, { requestId: current.requestId,
+    expectedVersion: current.currentVersion, description: "Fourth saved request.", settingsText: latest.settingsText },
+  "loop-replay-edit-0003");
+  assert.equal(next.request.currentVersion, 4); assert.equal(next.request.savedAuthorization, false);
+  assert.equal(f.dispatches(), 0);
+});
+
+test("B1a service owner guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  await f.db.query("UPDATE control_role_grants SET role_key='operator'"); const before = f.writes();
+  const error = await f.desk.saveLoopDraft(f.identity, f.project.projectId, f.draft, "loop-owner-refusal-0001").then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a owner refusal attempts zero persistence");
+  assert.match(String(error), /access_denied/u);
+});
+
+test("B1a service current version guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const before = f.writes();
+  const error = await f.desk.authorizeLoopStart(f.identity, f.project.projectId, { ...f.start, expectedVersion: 2 },
+    "loop-version-refusal-0001", f.observation).then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a version refusal attempts zero persistence");
+  assert.match(String(error), /conflict/u);
+});
+
+test("B1a service hash guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const before = f.writes();
+  const error = await f.desk.authorizeLoopStart(f.identity, f.project.projectId, { ...f.start, requestSha256: "0".repeat(64) },
+    "loop-hash-refusal-0001", f.observation).then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a hash refusal attempts zero persistence");
+  assert.match(String(error), /conflict/u);
+});
+
+test("B1a service confirmation guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const before = f.writes();
+  const error = await f.desk.authorizeLoopStart(f.identity, f.project.projectId, f.start, "loop-confirm-refusal-0001",
+    { ...f.observation, confirmation: { ...f.observation.confirmation, input_version: "SYNTHETIC:10" } }).then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a confirmation refusal attempts zero persistence");
+  assert.match(String(error), /conflict/u);
+});
+
+test("B1a service pin guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  const second = await f.desk.saveLoopDraft(f.identity, f.project.projectId, f.draft, "loop-pin-second-root-0001");
+  const before = f.writes();
+  const error = await f.desk.recordLoopRunLink({ ...f.linkInput, requestId: second.request.requestId,
+    run: { ...syntheticRun(2), toolingRevision: `sha256:${"8".repeat(64)}` } }).then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a pin refusal attempts zero persistence");
+  assert.match(String(error), /loop_contract_pin_mismatch/u);
+});
+
+test("B1a service signature guard refuses the whole projection", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  await f.db.exec("ALTER TABLE control_loop_improvement_requests DISABLE TRIGGER USER");
+  await f.db.query("UPDATE control_loop_improvement_requests SET auth_tag=$1", [`hmac-sha256:${"0".repeat(64)}`]);
+  await f.db.exec("ALTER TABLE control_loop_improvement_requests ENABLE TRIGGER USER");
+  await assert.rejects(f.desk.viewLoopDesk(f.identity, f.project.projectId), /loop_improvement_integrity_failed/u,
+    "B1a signature projection refusal");
+});
+
+test("B1a strict boundary, missing contract, revoked and expired sessions leave no partial draft", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
+  for (const draft of [{ ...f.draft, selectedWorkerIds: [] }, { ...f.draft, description: "  " },
+    { ...f.draft, settingsText: "[]" }, { ...f.draft, settingsText: '{"x":"' + "é".repeat(33000) + '"}' },
+    { ...f.draft, description: "-----BEGIN PRIVATE KEY-----" }])
+    await assert.rejects(f.desk.saveLoopDraft(f.identity, projectId, draft, "loop-invalid-input-0001"), /invalid_request/u);
+  await assert.rejects(f.desk.saveLoopDraft(f.identity, "project:foreign", f.draft, "loop-foreign-test-0001"), /not_found/u);
+  const unpinned = new ImproveControlRoomDeskServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, undefined, () => now);
+  await assert.rejects(unpinned.recordLoopRunLink(f.linkInput), /loop_contract_unavailable/u);
+  await assert.rejects(unpinned.authorizeLoopStart(f.identity, projectId, f.start, "loop-unpinned-0001", f.observation), /loop_contract_unavailable/u);
+  await assert.rejects(f.desk.recordLoopRunLink({ ...f.linkInput, run: { ...syntheticRun(), a2SchemaVersion: 2 } }));
+  for (const observed of [{ ...f.observation, inputVersion: 9 }, { ...f.observation, settingsDigest: "wrong" },
+    { ...f.observation, confirmation: { ...f.observation.confirmation, path: "work/docs/wrong.md" } },
+    { ...f.observation, confirmation: { ...f.observation.confirmation, who: "worker" } },
+    { ...f.observation, confirmation: { ...f.observation.confirmation, at: "yesterday" } }])
+    await assert.rejects(f.desk.authorizeLoopStart(f.identity, projectId, f.start, "loop-invalid-observation-0001", observed));
+  await assert.rejects(f.desk.saveLoopDraft({ ...f.identity, expiresAt: new Date(now).toISOString() }, projectId, f.draft,
+    "loop-expired-test-0001"), /authentication_required/u);
+  await f.db.query("UPDATE control_web_sessions SET revoked_at=$1", [new Date(now).toISOString()]);
+  await assert.rejects(f.desk.saveLoopDraft(f.identity, projectId, f.draft, "loop-revoked-test-0001"), /authentication_required/u);
+  assert.equal(f.writes(), 3, "only the initial root, input and link were attempted");
+});
+
+test("B1a precommit expiry rolls back root and input together", async t => {
+  const f = await deskFixture(); t.after(() => void f.db.close()); let current = now, attempts = 0;
+  const traced = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    const result = await tx.query<T>(sql, params);
+    if (/INSERT INTO control_loop_improvement_inputs/u.test(sql)) { attempts += 1; current = now + 3600000; }
+    return result;
+  } });
+  const client: DatabaseClient = { query: f.client.query,
+    transaction: work => f.client.transaction(tx => work(traced(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(traced(tx)), check) };
+  const desk = new ImproveControlRoomDeskServiceV1(client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, undefined, () => current);
+  await assert.rejects(desk.saveLoopDraft(f.identity, f.project.projectId, { description: "Expired before commit.", settingsText: "{}" },
+    "b1a-expired-precommit-0001"), /authentication_required/u);
+  assert.equal(attempts, 1);
+  for (const table of ["control_loop_improvement_requests", "control_loop_improvement_inputs"])
+    assert.equal((await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n, 0);
+});
+
+for (const difference of [-1, 1]) test(`B1a injected fixture catalog count ${difference}`, async t => {
+  const f = await deskFixture(); t.after(() => void f.db.close()); let closed = false, catalog = false, locked = false;
+  assert.equal(await readPrivateWebSchemaDigest(f.client), privateWebSchemaDigest, "injected count proof has the measured schema");
+  const hash = "a".repeat(64), manifest = { commit: "b".repeat(40), tree: "c".repeat(40), artifactDigest: hash };
+  const config = { host: "127.0.0.1", port: 58460, database: "cr14b_rehearsal_catalog", username: "control_room_migrator",
+    password: "synthetic-test-only", majorVersion: 17 as const };
+  const web = { ...config, username: "control_room_web" };
+  const traced = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    if (sql.includes("SELECT current_user=session_user")) return { rows: [{ valid: true }] as T[] };
+    if (sql.includes("SELECT c.relname AS name")) { catalog = true;
+      // These cases isolate only catalog cardinality; the real PG case never substitutes query results.
+      const actual = await tx.query<{ name: string }>(sql, params), rows = actual.rows;
+      assert.equal(rows.length, 253);
+      return { rows: (difference < 0 ? rows.slice(1) : [...rows, { name: "synthetic_extra_table" }]) as T[] };
+    }
+    if (sql.startsWith("LOCK TABLE")) locked = true;
+    return tx.query<T>(sql, params);
+  } });
+  const prep = createInjectedPrivateFixturePreparation({ clock: () => now, monotonic: () => 0,
+    openDatabase: () => ({ client: { query: f.client.query,
+      transaction: work => f.client.transaction(tx => work(traced(tx))),
+      transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(traced(tx)), check) },
+      close: async () => { closed = true; } } as ReturnType<typeof createPrivatePostgresDatabase>) });
+  const result = await prep.prepare({ manifest, migrator: config, webDatabase: { host: web.host, port: web.port, database: web.database,
+    username: web.username, majorVersion: 17 }, packet: { manifest, migratorScopeDigest: fixtureMigratorScopeDigest(config),
+    webScopeDigest: rehearsalScopeDigest(web), ownerApprovalDigest: hash, cleanupPlanDigest: hash, pgPackageDigest: hash,
+    pgVersionNumber: 170000, expiresAt: now + 120000, durationMs: 60000, dedicatedEmptyDatabase: true,
+    migrationsApplied: "0001-0054", setupRolesAccepted: true, maximumConnections: 1, maximumTransactions: 1,
+    maximumStatements: 256, installOrProvision: false, automaticRetry: false, cleanup: "close_owned_client_then_operator_database_cleanup" } });
+  assert.equal(result.evidence.disposition, "stopped"); assert.equal(catalog, true); assert.equal(locked, false); assert.equal(closed, true);
+});
+
+test("B1a foreign owner and tenant cannot mutate saved lineage", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  const subject = "second-test-owner", id = "identity:second-loop-owner", tokenDigest = sha256Digest({ session: subject });
+  await f.db.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES($1,'tenant:web','human','Second fixture owner',$2,$3,'active',$4,$4)`,
+  [id, f.identity.provider, sha256Digest({ provider: f.identity.provider, subject }), new Date(now).toISOString()]);
+  await f.db.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+    risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:second-loop-owner','tenant:web',$1,'owner','["*"]','["*"]','critical',true,false,$2,$2)`, [id, new Date(now).toISOString()]);
+  const second = { ...f.identity, subject, tokenDigest }, before = f.writes();
+  await assert.rejects(f.desk.reviseLoopDraft(second, f.project.projectId, { ...f.draft, requestId: f.start.requestId, expectedVersion: 1 },
+    "b1a-foreign-owner-edit-0001"), /not_found/u);
+  await assert.rejects(f.desk.authorizeLoopStart(second, f.project.projectId, f.start, "b1a-foreign-owner-start-0001", f.observation), /not_found/u);
+  assert.equal(f.writes(), before);
+  const foreignTenant = new ImproveControlRoomDeskServiceV1(f.client, { tenantId: "tenant:other", workspaceId: "workspace:web" }, key,
+    undefined, () => now, syntheticLoopContract);
+  await assert.rejects(foreignTenant.viewLoopDesk(f.identity, f.project.projectId), /access_denied/u);
+  assert.equal(f.writes(), before);
+});
+
+test("B1a service Start owner guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  await f.db.query("UPDATE control_role_grants SET role_key='operator'"); const before = f.writes();
+  const error = await f.desk.authorizeLoopStart(f.identity, f.project.projectId, f.start, "b1a-start-owner-guard-0001", f.observation)
+    .then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a Start owner refusal attempts zero persistence");
+  assert.match(String(error), /access_denied/u);
+});
+
+test("B1a service high risk guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  await f.db.query("UPDATE control_role_grants SET risk_ceiling='low'"); const before = f.writes();
+  const error = await f.desk.authorizeLoopStart(f.identity, f.project.projectId, f.start, "b1a-start-risk-guard-0001", f.observation)
+    .then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a high risk refusal attempts zero persistence");
+  assert.match(String(error), /access_denied/u);
+});
+
+test("B1a service settings observation guard refuses before persistence", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close()); const before = f.writes();
+  const error = await f.desk.authorizeLoopStart(f.identity, f.project.projectId, f.start, "b1a-settings-guard-0001",
+    { ...f.observation, settingsDigest: "synthetic-wrong-digest" }).then(() => undefined, error => error);
+  assert.equal(f.writes(), before, "B1a settings observation refusal attempts zero persistence");
+  assert.match(String(error), /conflict/u);
+});
+
+test("B1a service record digest guard refuses the whole projection", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  await f.db.exec("ALTER TABLE control_loop_improvement_requests DISABLE TRIGGER USER");
+  await f.db.query("UPDATE control_loop_improvement_requests SET record_digest=$1", [`sha256:${"0".repeat(64)}`]);
+  await f.db.exec("ALTER TABLE control_loop_improvement_requests ENABLE TRIGGER USER");
+  await assert.rejects(f.desk.viewLoopDesk(f.identity, f.project.projectId), /loop_improvement_integrity_failed/u,
+    "B1a record digest projection refusal");
+});
+
+
+test("B2a desk HTTP delegates one signed legacy/loop projection without adapter access", async t => {
+  const f = await loopFixture(); t.after(() => void f.db.close());
+  const legacyDesk = new ImproveControlRoomDeskServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, f.pipelines, () => now);
+  const legacy = (await legacyDesk.create(f.identity, f.project.projectId, { description: "Retained legacy pipeline.", pipelineTemplateId: (await f.desk.view(f.identity, f.project.projectId)).templates[0]!.templateId,
+    selectedWorkerIds: ["worker:builder", "worker:checker"], leadWorkerId: "worker:lead" }, "b2a-legacy-fixture-0001")).request;
+  let adapterCalls = 0;
+  const adapter = { contract: syntheticLoopContract, status: () => { adapterCalls++; throw new Error("unexpected_adapter_read"); } } as never;
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, { integrityKey: key, adapter }, () => now);
+  const handler = createImproveControlRoomHttpHandlerV1({ origin, trust, loopBridge: bridge, clock: () => now });
+  const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/desk`;
+  const before = f.writes();
+  const response = await handler(webRequest(path)); assert.equal(response.status, 200);
+  const value = await response.json(); assert.deepEqual(value, await f.desk.viewLoopDesk(f.identity, f.project.projectId));
+  assert.equal(value.legacy.requests[0].requestId, legacy.requestId);
+  assert.ok(value.loopRequests[0].runLink);
+  assert.equal(value.loopRequests[0].runLink.initialInputVersion, 1);
+  assert.equal(value.loopRequests[0].startsWork, false); assert.equal(value.loopRequests[0].grantsDeployAuthority, false);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  for (const suffix of ["?filter=all", "?owner=other"]) assert.equal((await handler(webRequest(path + suffix))).status, 400);
+  assert.equal((await handler(webRequest(path, "POST", {}))).status, 400);
+  const foreign = webRequest(path); foreign.headers.set("origin", "https://foreign.invalid"); foreign.headers.set("sec-fetch-site", "cross-site");
+  assert.equal((await handler(foreign)).status, 403);
+  const missing = webRequest(path); missing.headers.delete("cf-access-jwt-assertion"); assert.equal((await handler(missing)).status, 401);
+  assert.equal((await handler(webRequest(path, "GET", undefined, "b2a-read-key-00001", webToken({ exp: now / 1000 - 1 })))).status, 401);
+  await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'");
+  assert.equal((await handler(webRequest(path))).status, 403);
+  await f.db.query("UPDATE control_role_grants SET role_key='owner',revoked_at=$1 WHERE id='grant:web'", [new Date(now).toISOString()]);
+  assert.equal((await handler(webRequest(path))).status, 403);
+  await f.db.query("UPDATE control_web_sessions SET revoked_at=$1 WHERE token_digest=$2", [new Date(now).toISOString(), f.identity.tokenDigest]);
+  assert.equal((await handler(webRequest(path))).status, 401);
+  assert.equal(f.writes(), before); assert.equal(adapterCalls, 0);
+});
+
+test("B5 fixture completion cannot become a legacy candidate", async t => {
+  const { syntheticFirstWebsiteFixtureV1, driveSyntheticFirstWebsiteV1 } = await import("./helpers/improve-control-room-first-website");
+  const f = await syntheticFirstWebsiteFixtureV1(); t.after(() => f.close());
+  const legacyTables = ["control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "pipeline_runs", "work_items"];
+  const counts = async () => Object.fromEntries(await Promise.all(legacyTables.map(async table =>
+    [table, (await f.client.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n] as const)));
+  const before = await counts();
+  const { requestId } = await driveSyntheticFirstWebsiteV1(f, f.bridge, f.identity, f.project.projectId, "b5-legacy");
+  assert.equal(f.phase(), "finished");
+  // The SYNTHETIC completion reaches only the loop publisher, which records a loop candidate.
+  assert.equal((await f.publish()).state, "recorded");
+  // The legacy pipeline candidate path has no row to bind a loop request or run link to.
+  for (const pipelineRunId of [requestId, (await f.lineage()).id])
+    await assert.rejects(f.desk.recordCandidate({ projectId: f.project.projectId, improvementRequestId: requestId, pipelineRunId,
+      baseRevision: f.heads.base, candidateRevision: f.heads.final, summary: "B5 fixture completion.", changedAreas: ["index.html"],
+      testResults: [testResult("fast")], databaseChanges: { kind: "none" }, riskFlags: [], independentReviews: [],
+      leadWorkerId: "worker:lead" }), "B5 a loop completion is never a legacy candidate");
+  assert.deepEqual(await counts(), before, "B5 fixture completion writes no legacy request, candidate, decision or pipeline row");
+  const view = await f.desk.viewLoopDesk(f.identity, f.project.projectId);
+  assert.deepEqual(view.legacy, await f.desk.view(f.identity, f.project.projectId));
+  assert.equal(view.legacy.requests.length, 0); assert.deepEqual(view.loopRequests.map(r => r.requestId), [requestId]);
+  assert.equal(view.loopRequests[0]!.grantsDeployAuthority, false);
+  assert.equal((await f.client.query("SELECT 1 FROM control_loop_update_candidates")).rows.length, 1, "B5 the completion is one loop candidate only");
 });

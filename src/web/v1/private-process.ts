@@ -1,3 +1,6 @@
+import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
+import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins, cloudflareAccessGatewayAssertionProfileV1,
@@ -70,6 +73,8 @@ import type { ProjectOrchestrationOwnerPortV1 } from "./project-orchestration-ow
 import { createProjectOrchestrationHttpHandlerV1 } from "./project-orchestration-http";
 
 export interface PrivateWebProcessOptions {
+  loopBridge?: LoopBridgeConfigurationV1 & { loopCandidates?: LoopCandidateConfigurationV1 };
+  loopCandidates?: LoopCandidateConfigurationV1;
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
   /** Optional separately approved private address; same services, distinct Access audience. */
   secondaryAccess?: { origin: string; audience: string };
@@ -177,6 +182,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const origin = new URL(options.origin);
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
+  // A split loop key would fail every loop desk read of legacy rows.
+  if (options.loopBridge && options.workBatches
+    && !loopKeyMatchesLegacyKeyV1(options.loopBridge.integrityKey, options.workBatches.integrityKey)) throw new Error("invalid_private_app_config");
+  if (options.loopCandidates && options.workBatches
+    && !loopKeyMatchesLegacyKeyV1(options.loopCandidates.integrityKey, options.workBatches.integrityKey)) throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
   const productConfiguration = options.productConfiguration === undefined ? undefined
     : parseProductConfigurationV1(options.productConfiguration);
@@ -349,6 +359,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories, tasks) : undefined;
   const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
+  const candidateConfiguration = resolveLoopCandidateConfigurationV1(options.loopCandidates, options.loopBridge);
+  const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
+    candidateConfiguration.contract, candidateConfiguration) : undefined;
+  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
   const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
   const operationsMode = options.operationsMode ? new WebOperationsModeServiceV1(options.database.client,
@@ -498,14 +514,23 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(receipt, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me/action-items") {
-            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-            if (!actionInboxSource) throw new WebAccessError("not_found");
+            if (request.method !== "GET" || url.search || request.body) throw new WebAccessError("invalid_request");
+            if (!actionInboxSource && !loopBridge) throw new WebAccessError("not_found");
             const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
             });
-            const source = await actionInboxSource.read({ ...scope, state: "open" });
-            return Response.json(source, { headers: privateResponseHeaders });
+            const source = actionInboxSource ? await actionInboxSource.read({ ...scope, state: "open" })
+              : { observedAt: scope.now, items: [], truncated: false };
+            let loop;
+            if (loopBridge) {
+              try { loop = await loopBridge.readAttention(identity); }
+              catch (error) {
+                if (error instanceof WebAccessError && ["authentication_required", "access_denied"].includes(error.code)) throw error;
+                loop = { schemaVersion: 1, state: "unavailable", code: "unavailable" };
+              }
+            }
+            return Response.json({ ...source, ...(loop ? { loop } : {}) }, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/operator-surface") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
@@ -928,11 +953,17 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
-          if (improvementDesk && (url.pathname === "/api/v1/update-candidates"
+          if (isLoopCandidateRouteV1(url.pathname)) {
+            if (!loopCandidateDesk) throw new WebAccessError("not_found");
+            return createLoopCandidateHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: loopCandidateDesk, clock })(request);
+          }
+          if ((improvementDesk || loopBridge) && (url.pathname === "/api/v1/update-candidates"
             || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
-            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)))
+            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)
+            || !!loopBridge && /^\/api\/v1\/projects\/[^/]+\/improvements\/loop\//.test(url.pathname)))
             return createImproveControlRoomHttpHandlerV1({ origin: site.origin, trust,
-              gatewayAssertionProfile, service: improvementDesk, clock })(request);
+              gatewayAssertionProfile, service: improvementDesk, loopBridge, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -1066,6 +1097,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             new Promise<void>(resolve => { timer = setTimeout(() => { timedOut = true; force(); resolve(); }, drainMs); })]);
         } finally { clearTimeout(timer); keys.close(); }
         // The bounded production pool terminates all remaining work. Never retry an uncertain write.
+        await loopBridge?.close();
         await options.database.close();
         if (timedOut) throw new Error("private_app_drain_uncertain");
       })();

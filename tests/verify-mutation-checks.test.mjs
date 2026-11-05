@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { assertMutationLaneCoverage } from "../scripts/check-test-lane-coverage.mjs";
 
 const verifier = resolve("scripts/ci/verify-mutation-checks.mjs");
 const workflow = readFileSync(resolve(".github/workflows/ci.yml"), "utf8");
@@ -644,7 +645,8 @@ test("a timed-out mutated command restores the file", () => {
   const root = fixture();
   try {
     const path = manifest(root, {
-      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+      // Use a fast baseline so the 50ms timeout reaches the mutated command.
+      test: 'if grep -q allow src/guard.mjs; then exec node -e "setInterval(()=>{},1000)"; fi',
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
     const result = run(root, path, { MUTATION_CHECK_TIMEOUT_MS: "50" });
@@ -1025,23 +1027,116 @@ test("a test-created stray file is reported distinctly after restoration", () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+// Independent measured budget contract: saved CI exhausted 550s, whereas the
+// R13 local full run took 283.2s. Reserve 900s for the parent, 60s for runner
+// cleanup, another 60s for the CI step, and setup headroom in the job.
+const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+const yaml = createRequire(import.meta.resolve("eslint"))("js-yaml");
+const budgetWorkflow = yaml.load(workflow).jobs;
+const bridge = readFileSync(new URL("./improve-control-room-loop-bridge-mutations.test.ts", import.meta.url), "utf8");
+const bridgeLane = "test:improve-control-room-loop-bridge-mutations";
+
+test("bridge mutation lane retains its measured parent, runner, step and job budgets", () => {
+  assertMutationLaneCoverage(scripts, budgetWorkflow, bridge);
+  assert.match(scripts[bridgeLane], /--test-timeout=960000(?: |$)/u);
+  assert.equal(budgetWorkflow["mutation-checks-lineage"]["timeout-minutes"], 50);
+  assert.equal(budgetWorkflow["mutation-checks-lineage"].steps.find(step => step.run === `pnpm run ${bridgeLane}`)["timeout-minutes"], 17);
+});
+
+test("bridge lane guard rejects a stale, missing or commented parent timeout", () => {
+  for (const replacement of ["timeout:550000", "timeout:600000", "timeout:1800000", "timeout:900000,timeout:550000", "/* timeout:900000 */", "concurrency:2"]) {
+    const altered = bridge.replace(/timeout:\s*\d+/u, replacement);
+    assert.notEqual(altered, bridge, "the independent parent-timeout mutation must apply");
+    assert.throws(() => assertMutationLaneCoverage(scripts, budgetWorkflow, altered), { name: "AssertionError" }, replacement);
+  }
+});
+
+test("bridge lane guard rejects reduced, missing, widened or overriding runner timeouts", () => {
+  for (const replacement of ["--test-timeout=600000", "", "--test-timeout=1800000", "--test-timeout=960000 --test-timeout=550000"]) {
+    const altered = { ...scripts, [bridgeLane]: scripts[bridgeLane].replace(/--test-timeout=\d+/u, replacement) };
+    assert.throws(() => assertMutationLaneCoverage(altered, budgetWorkflow, bridge), { name: "AssertionError" }, replacement);
+  }
+});
+
+test("bridge lane guard rejects insufficient workflow step and job headroom", () => {
+  for (const target of ["step", "job"]) {
+    const altered = structuredClone(budgetWorkflow);
+    const job = altered["mutation-checks-lineage"];
+    if (target === "step") job.steps.find(step => step.run === `pnpm run ${bridgeLane}`)["timeout-minutes"] = 10;
+    else job["timeout-minutes"] = 45;
+    assert.throws(() => assertMutationLaneCoverage(scripts, altered, bridge), { name: "AssertionError" }, target);
+  }
+});
+
 test("the CI job gates verification on a branch manifest and joins the merge gate", () => {
-  const start = workflow.indexOf("  mutation-checks:");
-  const end = workflow.indexOf("\n  quick:", start);
-  assert.ok(start > 0 && end > start, "the mutation-checks job must appear before quick checks");
-  const job = workflow.slice(start, end);
-  assert.match(job, /name: Mutation checks/u);
-  assert.match(job, /fetch-depth: 0/u);
-  assert.match(job, /if: steps\.manifest\.outputs\.exists == 'true'/u);
-  assert.match(job, /--warn-only/u);
-  const anchorStep = job.split("      - name: ").find(step => step.startsWith("Validate every declared mutation anchor"));
-  assert.ok(anchorStep, "all branches must validate anchors");
-  assert.match(anchorStep, /run: node scripts\/ci\/verify-mutation-checks\.mjs --anchors-only/u);
-  assert.doesNotMatch(anchorStep, /\bif:/u);
-  assert.doesNotMatch(job, /secrets\./u);
-  const gate = workflow.slice(workflow.indexOf("  merge-gate:"));
-  assert.match(gate, /needs: \[[^\]]*mutation-checks/u);
-  assert.match(gate, /check mutation-checks/u);
+  const { jobs } = createRequire(import.meta.resolve("eslint"))("js-yaml").load(workflow);
+  const root = mkdtempSync(join(tmpdir(), "manifest-workflow-guard-"));
+  const list = join(root, "manifests"), trace = join(root, "trace");
+  const manifests = ["mutation-checks/first.json", "mutation-checks/with spaces.json", "mutation-checks/with\nnewline.json"];
+  // Execute the shipped loop with a synthetic verifier; no real mutation or model runs.
+  const verifierStub = `node() {
+    [ "$1" = scripts/ci/verify-mutation-checks.mjs ] || return 99
+    printf '%s\\0' "$2" >> "$MANIFEST_TRACE"
+    [ "$2" != "$FAIL_MANIFEST" ]
+  }`;
+  function check(parsed) {
+    const job = parsed["mutation-checks"], gate = parsed["merge-gate"];
+    assert.match(job.name, /^Mutation checks/u);
+    assertMutationLaneCoverage(JSON.parse(readFileSync("package.json", "utf8")).scripts, parsed);
+    assert.equal(job.steps.find(step => step.uses?.startsWith("actions/checkout@")).with["fetch-depth"], 0);
+    const selection = job.steps.find(step => step.id === "manifest");
+    assert.match(selection.run, /scripts\/ci\/check-mutation-manifest-branch\.sh/u);
+    assert.match(selection.run, /echo "list=\$\{list\}" >> "\$GITHUB_OUTPUT"/u);
+    const anchors = job.steps.find(step => step.name === "Validate every declared mutation anchor");
+    assert.equal(anchors.run, "node scripts/ci/verify-mutation-checks.mjs --anchors-only");
+    const verification = job.steps.find(step => step.name === "Re-run declared guard mutations");
+    assert.equal(verification.env.MANIFEST_LIST, "${{ steps.manifest.outputs.list }}");
+    assert.match(job.steps.find(step => step.name === "Warn about guard-like changes without a manifest").run, /--warn-only/u);
+    assert.doesNotMatch(JSON.stringify(job), /secrets\./u);
+    assert.ok(gate.needs.includes("mutation-checks"));
+    assert.equal(gate.if, "${{ always() }}");
+    const finalGate = gate.steps.find(step => step.run?.includes("check mutation-checks"));
+    assert.ok(finalGate, "merge gate must check the mutation job result");
+    assert.equal(finalGate.if, undefined); assert.equal(finalGate["continue-on-error"], undefined);
+    for (const entries of [[], manifests]) {
+      for (const failure of ["", ...entries]) {
+        writeFileSync(list, entries.map(name => `${name}\0`).join(""));
+        writeFileSync(trace, "");
+        const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", `${verifierStub}\n${verification.run}`], {
+          encoding: "utf8", timeout: 5000,
+          env: { ...process.env, MANIFEST_LIST: list, MANIFEST_TRACE: trace, FAIL_MANIFEST: failure },
+        });
+        assert.deepEqual(readFileSync(trace, "utf8").split("\0").filter(Boolean), entries,
+          "verification must visit the full manifest list even after a failure");
+        assert.equal(result.status, failure ? 1 : 0, "manifest failures must fail verification");
+        // A failed non-tolerated step fails its job. Execute the actual merge-gate
+        // command with every other job successful to prove that verdict reaches it.
+        const command = finalGate.run
+          .replaceAll("${{ needs.mutation-checks.result }}", result.status === 0 ? "success" : "failure")
+          .replace(/\$\{\{[^}]+\}\}/gu, "success");
+        const verdict = spawnSync("/bin/bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", command], {
+          encoding: "utf8", timeout: 5000, env: { ...process.env, COMPONENTS_ROUTED: "true" },
+        });
+        assert.equal(verdict.status, failure ? 1 : 0, "manifest failures must reach the final merge gate");
+      }
+    }
+  }
+  try {
+    check(jobs);
+    const truncated = structuredClone(jobs);
+    const loop = truncated["mutation-checks"].steps.find(step => step.name === "Re-run declared guard mutations");
+    loop.run = loop.run.replace('done < "$MANIFEST_LIST"', 'break\ndone < "$MANIFEST_LIST"');
+    assert.throws(() => check(truncated), /must visit the full manifest list/u);
+    const swallowed = structuredClone(jobs);
+    const swallowedLoop = swallowed["mutation-checks"].steps.find(step => step.name === "Re-run declared guard mutations");
+    swallowedLoop.run = swallowedLoop.run.replace('exit "$failed"', 'exit 0');
+    assert.throws(() => check(swallowed), /manifest failures must fail verification/u);
+    const ignored = structuredClone(jobs);
+    const ignoredGate = ignored["merge-gate"].steps.find(step => step.run?.includes("check mutation-checks"));
+    ignoredGate.run = ignoredGate.run.replace('${{ needs.mutation-checks.result }}', 'success');
+    assert.throws(() => check(ignored), /manifest failures must reach the final merge gate/u);
+    console.log("Manifest negative proof: truncated list, swallowed failure and ignored merge-gate result rejected");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("the self-manifest runs behavioral tests without the source-drift meta-test", () => {

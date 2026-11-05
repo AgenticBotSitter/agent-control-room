@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSharedTaskAttention, refreshSharedTaskAttention } from "../shared-task-attention";
 import { type ActionInboxSourceState } from "../../../src/web/v1/action-inbox-browser-client";
+import { loopAttentionComplete } from "../../../src/web/v1/improve-control-room-loop-attention-wire";
 import { buildActionInbox, type ActionInboxDisplayItem } from "../../../src/web/v1/action-inbox";
 import { OwnerName } from "../owner-ui";
 import { createProjectBrowserClient } from "../../../src/web/v1/browser-client";
@@ -44,8 +45,8 @@ export function ActionInboxPanel({ data, loading: pending = false, now = Date.no
   // re-check (r6ibfix; lead rule: a re-check never blanks owner status).
   const source = data.operator.state !== "loading" ? data.operator.source : undefined;
   // Reuse the header snapshot's expiry classification across later renders (r7ipol).
-  const items = useMemo(() => sharedItems ?? buildActionInbox(taskPages, source?.items, now),
-    [sharedItems, taskPages, source?.items, now]);
+  const items = useMemo(() => sharedItems ?? buildActionInbox(taskPages, source?.items, now, source?.loop?.state === "available" ? source.loop.items : []),
+    [sharedItems, taskPages, source, now]);
   const [page, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil(items.length / 25));
   const currentPage = Math.min(page, pageCount - 1);
@@ -68,8 +69,8 @@ export function ActionInboxPanel({ data, loading: pending = false, now = Date.no
   }, [projectIdsKey, data]);
   useEffect(() => { setPage(0); }, [data]);
   const loading = pending || data.tasks.state === "loading" || data.operator.state === "loading";
-  const operatorComplete = data.operator.state === "available" ? !data.operator.source.truncated
-    : data.operator.state === "unavailable" && (data.operator.code === "access_denied" || data.operator.code === "not_configured");
+  const operatorComplete = data.operator.state === "available" ? !data.operator.source.truncated && loopAttentionComplete(data.operator.source.loop)
+    : data.operator.state === "unavailable" && (data.operator.code === "not_configured");
   const fullyAvailable = !loading && data.tasks.state === "available" && !data.tasks.truncated && operatorComplete;
   const sharedAccessFailure = data.tasks.state === "unavailable" && data.operator.state === "unavailable"
     && data.tasks.code === data.operator.code && ["authentication_required", "access_denied"].includes(data.tasks.code)
@@ -108,6 +109,9 @@ export function ActionInboxPanel({ data, loading: pending = false, now = Date.no
       {data.tasks.state === "available" && data.tasks.truncated ? " The 1,000-candidate safety limit was reached; more task attention may exist."
         : data.tasks.state === "unavailable" && taskPages.length ? " Later task attention could not be checked; the already-read items remain visible."
           : " No later task-attention page was reported."}</p> : null}
+    {source?.loop && !loopAttentionComplete(source.loop) && source.loop.state === "available" && !source.loop.truncated ? <p role="alert">Attention could not be fully checked. A saved loop decision is unavailable.</p> : null}
+    {source?.loop?.state === "unavailable" ? <p role="alert">Attention could not be fully checked. The saved loop source is unavailable.</p> : null}
+    {source?.loop?.state === "available" && source.loop.truncated ? <p role="alert">Attention could not be fully checked. Older saved requests were not checked.</p> : null}
     {source?.truncated ? <p role="alert">The canonical attention source reached its safety limit. More owner actions may exist.</p> : null}
   </div>;
 }

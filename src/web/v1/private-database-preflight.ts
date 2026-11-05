@@ -87,7 +87,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // production_table_grants.sql met int9's set: real PostgreSQL 17
 // (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
 // previous value was `0b983887...`.
-export const privateWebSchemaDigest = "9215bd0d162a39eaab6a0a84d6c1d6f7774b299578435ad654cfe37788bea701";
+// Current value includes the 0303 retained loop candidate schema and grants, the 0304
+// candidate guard that binds Start lineage to the signed authorization id, and 0305's
+// null-tolerant payload check/guard for Unavailable final-report sections. The previous
+// value was `16521bab...`.
+export const privateWebSchemaDigest = "3448fa44ef3ad086d46139684ba078f6af8ad43f6eee18af1342f095ed126529";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -129,6 +133,9 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links",
+  "control_loop_improvement_requests", "control_loop_improvement_inputs",
+  "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
+  "control_loop_update_candidates", "control_loop_update_candidate_decisions",
   // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
   // notice, claim and settle, and holds nothing else on it. Listed here because
   // 0226 grants SELECT on it, and the column audit compares the live grant
@@ -185,6 +192,9 @@ privateWebInsertTables.add("pipeline_templates"); privateWebInsertTables.add("pi
 privateWebInsertTables.add("control_task_handoffs");
 privateWebInsertTables.add("control_job_dependencies");
 privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
+for (const table of ["control_loop_improvement_requests", "control_loop_improvement_inputs",
+  "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
+  "control_loop_update_candidates", "control_loop_update_candidate_decisions"]) privateWebInsertTables.add(table);
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // MIG-I: the dispatcher writes the FIRST head for a newly noticed item and

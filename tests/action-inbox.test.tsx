@@ -118,8 +118,9 @@ test("Action Inbox claims empty only after every source succeeds", () => {
     operator: { state: "unavailable", code: "access_denied" },
   } satisfies ActionInboxState }));
   assert.match(ideaOnly, /Workspace action records are not included with Idea Lab-only access/);
-  assert.match(ideaOnly, /No actions are waiting in the sources you can access/);
-  assert.doesNotMatch(ideaOnly, /role="alert"|This is not an all-clear|Owner access is required to read cross-project task attention/);
+  assert.doesNotMatch(ideaOnly, /No actions are waiting in the sources you can access/);
+  assert.match(ideaOnly, /This is not an all-clear/);
+  assert.doesNotMatch(ideaOnly, /Owner access is required to read cross-project task attention/);
   const partial = renderToStaticMarkup(createElement(ActionInboxPanel, { now: Date.parse(now), data: {
     tasks: { state: "available", pages: [emptyPage], truncated: false }, operator: { state: "unavailable", code: "request_failed" },
   } satisfies ActionInboxState }));
@@ -184,4 +185,18 @@ test("the canonical attention client uses the owner-scoped endpoint and rejects 
   assert.deepEqual(invalid, { state: "unavailable", code: "invalid_response" });
   const denied = await readActionInboxSource(async () => new Response(null, { status: 403 }));
   assert.deepEqual(denied, { state: "unavailable", code: "access_denied" });
+});
+
+test("B3c lifecycle items retain their reason action and exact saved request",async()=>{
+  const {loopAttentionItemSchemaV1}=await import("../src/web/v1/improve-control-room-loop-attention-wire");
+  const digest=`sha256:${"a".repeat(64)}`;
+  for(const [kind,expected] of [["finish","notification"],["stopped","notification"],["failed","failure"],["stall","blocked"]] as const){
+    const row=loopAttentionItemSchemaV1.parse({projectId:"project:lifecycle",requestId:"request:lifecycle",runLinkId:"link:lifecycle",localVersion:1,engineRevision:7,
+      kind,identity:kind==="finish"?{kind,completionDigest:digest}:{kind,evidenceDigest:digest},title:"Saved lifecycle outcome",summary:"Retained reason with <escaped text>",
+      observedAt:now,reasonCode:kind==="finish"?"FINISHED":kind==="failed"?"FAILED":kind==="stopped"?"STOPPED":"CLEANUP_REFUSED",nextAction:"Check exact retained evidence",retentionDigest:digest,
+      candidate:kind==="finish"?{candidateId:"candidate:lifecycle",candidateRevision:"b".repeat(40),recordDigest:digest}:null});
+    const [item]=buildActionInbox([],[],Date.parse(now),[row,row]);
+    assert.equal(item!.kind,expected);assert.equal(item!.summary,row.summary);assert.equal(item!.actionLabel,"Check exact retained evidence");
+    assert.equal(item!.href,"/projects/project%3Alifecycle/improvements#request=request%3Alifecycle");assert.deepEqual(item!.availableResponses,[]);
+  }
 });

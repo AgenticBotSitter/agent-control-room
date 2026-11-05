@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "9215bd0d162a39eaab6a0a84d6c1d6f7774b299578435ad654cfe37788bea701",
-  "note": "Measured after the full release ledger on real PostgreSQL17 as control_room_web using readPrivateWebSchemaDigest. The0300 down restores the independently captured prior release digest; install-database-phase-real-postgres verifies this pin and the shipped query."
+  "digest": "3448fa44ef3ad086d46139684ba078f6af8ad43f6eee18af1342f095ed126529",
+  "note": "Measured in PGlite and native PostgreSQL17 through 0307 review identity validation; the updater query produces the same digest. Compiled release pins must match this policy before release qualification."
 }

@@ -1,3 +1,4 @@
+import { pgSocketOptionV1, pgCtlInvocationV1 } from "../../src/pg-runtime/v1/pg-path-quoting.mjs";
 import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { sha256BackupFileV1 as sha256File } from "../../src/installer/shared/backup-files.mjs";
 // Verifies one bound backup only by restoring it into a new temp PostgreSQL 17
@@ -185,8 +186,10 @@ export function macGrantsMatchCurrentReleaseV1({ restored, current }) {
 }
 
 function native(pgBin, name, args, options = {}) {
-  return execFileSync(join(pgBin, name), args, { encoding: "utf8", timeout: 180_000,
-    env: { PATH: "/usr/bin:/bin", LC_ALL: "C", ...options.env }, ...options });
+  const environment = { PATH: "/usr/bin:/bin", LC_ALL: "C", ...options.env };
+  const invocation = name === "pg_ctl" ? pgCtlInvocationV1(args, environment, join(pgBin, "postgres")) : { args, environment };
+  return execFileSync(join(pgBin, name), invocation.args, { encoding: "utf8", timeout: 180_000,
+    ...options, env: invocation.environment });
 }
 
 async function createRecordedRoles(client, roles) {
@@ -331,7 +334,7 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
       schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal",
     })}\n`, { mode: 0o600, flag: "wx" });
     native(pgBin, "pg_ctl", ["-D", data, "-l", log, "-w", "-t", "30", "-o",
-      `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+      `${pgSocketOptionV1(socket)} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
     // Registered as soon as there is a running postmaster, and BEFORE anything
     // that can throw, so a failure after this point still has a teardown.
     await teardown.capturePostmasterPid();

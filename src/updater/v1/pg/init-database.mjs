@@ -1,3 +1,4 @@
+import { pgCtlInvocationV1 } from "../../../pg-runtime/v1/pg-path-quoting.mjs";
 // `init-database.mjs` — the install-night database init (INSTALL_COMPOSITION.md
 // §5.3, first script; §4.3 row 19).
 //
@@ -967,8 +968,8 @@ export async function initializeDatabaseV1(request, passwords, dependencies = {}
     //    .../.s.PGSQL.<port> failed: No such file or directory". The symptom
     //    names a missing socket and never mentions the port, so it reads as a
     //    crashed postmaster rather than a port that was never applied.
-    const started = await spawn({ executable: binary("pg_ctl"),
-      args: ["-D", paths.data, "-l", paths.logFile, "-o", `-p ${port}`, "-w", "-t", "60", "start"] });
+    const started = await spawn({ executable: binary("pg_ctl"), ...pgCtlInvocationV1(
+      ["-D", paths.data, "-l", paths.logFile, "-o", `-p ${port}`, "-w", "-t", "60", "start"], environment, binary("postgres")) });
     if (started.code !== 0)
       refuse(`database_init_postmaster_refused:${(started.stderr || "").trim().split("\n").pop()?.slice(0, 200)}`);
     steps.push("postmaster");

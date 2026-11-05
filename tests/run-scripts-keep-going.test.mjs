@@ -202,7 +202,7 @@ test("every independent component check and catch-up connector check still runs 
   const components = workflow.slice(workflow.indexOf("  test-components:"), workflow.indexOf("  test-updater:"));
   const steps = components.split("      - name: ").slice(1).filter(step => /\n        run: (?:pnpm run test:|node )/u.test(step));
   assert.ok(steps.length >= 9);
-  for (const step of steps) assert.match(step, /if: \$\{\{ !cancelled\(\) && matrix\.shard == '[1-5]' \}\}/u);
+  for (const step of steps) assert.match(step, /if: \$\{\{ !cancelled\(\) && matrix\.shard == '[1-6]' \}\}/u);
   const catchUp = workflow.slice(workflow.indexOf("      - name: Component lanes (merge gate)"), workflow.indexOf("      - name: Updater lane (merge gate)"));
   assert.match(catchUp, /run-scripts-keep-going\.mjs --expand test:components test:attack-kit \|\| status=\$\?/u);
   assert.match(catchUp, /resource-bound-local-start-contract-v2\.test\.ts \|\| status=\$\?/u);

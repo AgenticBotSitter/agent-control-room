@@ -187,18 +187,18 @@ test("local client shell exposes only reachable routes and reads only local work
  * serves the endpoint, and a host that does not — or whose read fails — must
  * keep navigation usable while showing that attention could not be checked. A count is
  * only ever shown when it was actually read. */
-test("the header needs-you badge counts only what it read, and a failed or absent page is simply not badged", async () => {
+test("the header needs-you badge counts fresh pages and marks failed or absent reads unknown", async () => {
   const cases = [
     { name: "exact count", response: () => Response.json(attentionPage([attentionItem("job-a"), attentionItem("job-b")])),
       expected: "2" },
     { name: "truncated count", response: () => Response.json(attentionPage([attentionItem("job-a")], "job-z")),
       expected: "1+" },
     { name: "no work needs the owner", response: () => Response.json(attentionPage([])), expected: "0" },
-    { name: "endpoint absent", response: () => new Response(null, { status: 404 }), expected: null },
-    { name: "read fails outright", response: () => { throw new Error("host unreachable"); }, expected: null },
+    { name: "endpoint absent", response: () => new Response(null, { status: 404 }), expected: "?" },
+    { name: "read fails outright", response: () => { throw new Error("host unreachable"); }, expected: "?" },
     // A body that is not a valid attention page is refused, never half-read
     // into a count.
-    { name: "malformed page", response: () => Response.json({ items: "not-a-list" }), expected: null },
+    { name: "malformed page", response: () => Response.json({ items: "not-a-list" }), expected: "?" },
   ];
   for (const { name, response, expected } of cases) {
     const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true, url: "http://127.0.0.1:3210/" });
