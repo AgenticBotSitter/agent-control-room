@@ -1,11 +1,12 @@
-// Required macOS host gates, lt-a2pin 03c3595 (no skips or fixture replacement):
+// Required macOS host gates, pinned tools revision 03c3595 (no skips or fixture replacement):
 // export CONTROL_ROOM_A2_TEST_LOOP="<pinned lead-tools checkout>/loop"
-// test -n "$CONTROL_ROOM_A2_TEST_LOOP" && node --import tsx --test --test-name-pattern='^P71 real settings check$' tests/loop-policy.test.ts
-// test -n "$CONTROL_ROOM_A2_TEST_LOOP" && node --import tsx --test --test-name-pattern='^P71 real provider settings check$' tests/loop-policy.test.ts
+// pnpm test:loop-policy:real
+// pnpm test:loop-policy:real:provider
+// pnpm test:loop-policy:real:all (requires both exact named passes)
 // Linux CI uses test:improve-control-room:linux-without-macos-host-gates. Its explicit
 // name-pattern excludes only these two cases: the pin's interpreter shim is macOS-only.
 // <root> is Node's synthetic ancestor: matching it would include every child test.
-// The Mac lane and either exact command still FAIL if CONTROL_ROOM_A2_TEST_LOOP is missing.
+// The Mac lane and all gate aliases FAIL if CONTROL_ROOM_A2_TEST_LOOP is missing.
 // test:improve-control-room dispatches by host OS, preserving the frozen CI lane registration.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -18,6 +19,30 @@ import { WebAccessError } from "../src/web/v1/access-verifier";
 import { taskFixture } from "./helpers/web-task";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+
+// Direct CLI mode runs the actual tests without quarantine and verifies their TAP.
+// Exit before node:test starts this parent file's registered test suite.
+if (process.argv[2] === '--host-gate') {
+  const names: Record<string, string[]> = {
+    settings: ['P71 real settings check'],
+    provider: ['P71 real provider settings check'],
+    all: ['P71 real settings check', 'P71 real provider settings check'],
+  };
+  const expected = Object.hasOwn(names, process.argv[3] ?? '') ? names[process.argv[3]!] : undefined;
+  if (!expected || process.argv.length !== 4) {
+    console.error('Usage: --host-gate settings|provider|all');
+    process.exit(1);
+  }
+  const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--test', '--test-reporter=tap',
+    `--test-name-pattern=^(?:${expected.join('|')})$`, 'tests/loop-policy.test.ts'],
+    { env, encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+  process.stdout.write(result.stdout ?? '');
+  process.stderr.write(result.stderr ?? '');
+  const status = result.error || result.signal ? 1 : hostGateStatus(result.status, result.stdout ?? '', expected);
+  if (status !== 0) console.error(`Host gate requires exactly these passing cases (no skips or todos): ${expected.join(', ')}`);
+  process.exit(status);
+}
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -72,7 +97,7 @@ test("P71 Linux CI excludes exactly two macOS host gates without skip-as-pass", 
   assert.doesNotMatch(lane, /skip|\|\|/);
   assert.match(scripts['test:components'], /pnpm test:improve-control-room(?: &&|$)/);
   assert.ok((await readFile('.github/workflows/ci.yml','utf8')).includes(' test:improve-control-room '));
-  assert.match(scripts['test:loop-policy:real'] ?? '', /--test-name-pattern=['"]\^P71 real settings check\$['"]/);
+  assert.equal(scripts['test:loop-policy:real'], 'node --import tsx tests/loop-policy.test.ts --host-gate settings');
   assert.doesNotMatch(scripts['test:loop-policy:real'], /skip|\|\|/);
   await mkdir(resolve('.test-tmp'), { recursive: true });
   const root = await mkdtemp(resolve('.test-tmp/p71-ci-filter-')); t.after(() => rm(root, { recursive: true, force: true }));
@@ -87,6 +112,77 @@ test("P71 Linux CI excludes exactly two macOS host gates without skip-as-pass", 
   const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
   const { stdout } = await promisify(execFile)(process.execPath, ['--test', `--test-name-pattern=${filter[1]}`, file], { env, timeout: 10000 });
   assert.match(stdout, /# pass 4/); assert.match(stdout, /# fail 0/); assert.match(stdout, /# skipped 0/);
+});
+
+// Keep the process verdict separate from TAP validation so a zero-match Node run
+// cannot use its passing file envelope as evidence that a host case executed.
+function hostGateStatus(status: number | null, tap: string, expected: readonly string[]): number {
+  if (status !== 0 || /^(?:not ok|Bail out!)/m.test(tap) || /^(?:not )?ok .+ # (?:SKIP|TODO)\b/im.test(tap)) return 1;
+  const cases = [...tap.matchAll(/^ok \d+ - ([^\r\n]+)$/gm)].map(match => match[1]!);
+  if (JSON.stringify(cases.sort()) !== JSON.stringify([...expected].sort())) return 1;
+  for (const [field, count] of Object.entries({ tests: expected.length, pass: expected.length,
+    fail: 0, cancelled: 0, skipped: 0, todo: 0 })) {
+    const values = [...tap.matchAll(new RegExp(`^# ${field} (\\d+)$`, 'gm'))];
+    if (values.length !== 1 || Number(values[0]![1]) !== count) return 1;
+  }
+  const plans = [...tap.matchAll(/^1\.\.(\d+)$/gm)];
+  return plans.length === 1 && Number(plans[0]![1]) === expected.length ? 0 : 1;
+}
+
+test("P71 macOS host gate aliases and registrations stay paired", async () => {
+  const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
+  for (const [alias, mode] of [['test:loop-policy:real', 'settings'],
+    ['test:loop-policy:real:provider', 'provider'], ['test:loop-policy:real:all', 'all']]) {
+    assert.equal(scripts[alias!], `node --import tsx tests/loop-policy.test.ts --host-gate ${mode}`);
+  }
+  const source = await readFile('tests/loop-policy.test.ts', 'utf8');
+  for (const name of ['P71 real settings check', 'P71 real provider settings check'])
+    assert.match(source, new RegExp(`^test\\(["']${name}["'],`, 'm'), `${name} must remain registered`);
+});
+
+test("P71 macOS host gate requires exact passing TAP cases", async t => {
+  const names = ['P71 real settings check', 'P71 real provider settings check'];
+  await mkdir(resolve('.test-tmp'), { recursive: true });
+  const root = await mkdtemp(resolve('.test-tmp/p71-host-gate-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'gate.mjs');
+  const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
+  const run = async (source: string, pattern = '^P71 real (?:provider )?settings check$') => {
+    await writeFile(file, "import test from 'node:test';\n" + source);
+    try {
+      const result = await promisify(execFile)(process.execPath,
+        ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, file], { env, timeout: 10000 });
+      return { status: 0, tap: result.stdout };
+    } catch (error) {
+      const result = error as { code: number; stdout: string };
+      return { status: result.code, tap: result.stdout };
+    }
+  };
+  const complete = await run(names.map(name => `test(${JSON.stringify(name)}, () => {});`).join('\n'));
+  assert.equal(hostGateStatus(complete.status, complete.tap, names), 0, 'both exact named passes accepted');
+  for (const [label, source, pattern] of [
+    ['empty Node file envelope', '', undefined],
+    ['zero filter matches', `test('unrelated case', () => {});`, undefined],
+    ['missing provider', `test(${JSON.stringify(names[0])}, () => {});`, undefined],
+    ['renamed provider', `test(${JSON.stringify(names[0])}, () => {}); test('renamed provider', () => {});`, '.+'],
+    ['skip', `test(${JSON.stringify(names[0])}, () => {}); test.skip(${JSON.stringify(names[1])}, () => {});`, undefined],
+    ['todo', `test(${JSON.stringify(names[0])}, () => {}); test.todo(${JSON.stringify(names[1])});`, undefined],
+    ['failed assertion', `test(${JSON.stringify(names[0])}, () => {}); test(${JSON.stringify(names[1])}, () => { throw Error('recorded failure'); });`, undefined],
+    ['extra case', names.concat('unexpected case').map(name => `test(${JSON.stringify(name)}, () => {});`).join('\n'), '.+'],
+    ['duplicate name', `test(${JSON.stringify(names[0])}, () => {}); test(${JSON.stringify(names[0])}, () => {});`, undefined],
+  ] as const) {
+    const result = await run(source, pattern);
+    assert.equal(hostGateStatus(result.status, result.tap, names), 1, label);
+  }
+  assert.equal(hostGateStatus(1, complete.tap, names), 1, 'nonzero child exit cannot pass');
+  assert.equal(hostGateStatus(null, complete.tap, names), 1, 'terminated child cannot pass');
+  for (const field of ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
+    const changed = complete.tap.replace(new RegExp(`# ${field} \\d+`), `# ${field} 99`);
+    assert.notEqual(changed, complete.tap);
+    assert.equal(hostGateStatus(0, changed, names), 1, `inconsistent ${field} count`);
+  }
+  assert.equal(hostGateStatus(0, complete.tap.replace(/^1\.\.2$/m, '1..0'), names), 1, 'plan must agree');
+  assert.equal(hostGateStatus(0, '', names), 1, 'empty output cannot pass');
 });
 
 test("P71 downgrade refuses retained run-edit commands before changing the schema", async t => {
@@ -303,7 +399,7 @@ test("P71 real settings check", async t => {
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createImproveControlRoomLoopAdapterV1, loopByteHashV1 } from "../src/web/v1/improve-control-room-loop-adapter";
 import { loopImprovementObservationSchemaV1, loopImprovementRunIdentitySchemaV1 } from "../src/improve-control-room/v1/schemas";
@@ -323,7 +419,7 @@ with open(os.path.join(root,'trace.jsonl'),'a') as f:
 mode=candidate.get('mode','ok')
 if mode.startswith('envelope'):
  result=dict(schema_version=1,eligible=True,slots={},candidates={},reasons=[],reserved_final=None,fallback=False,roster_digest=None,availability_digest=None)
- # Recorded shapes from lt-a2pin 03c3595 lineup.py:52,287-315 and cr.py:736-772.
+ # Recorded shapes from pinned tools revision 03c3595 lineup.py:52,287-315 and cr.py:736-772.
  # Top-level reasons add slot/model; slot and candidate reasons retain the base reason.
  if mode in ('envelope-waived','envelope-accepted','envelope-mixed','envelope-blocked','envelope-eligible-unwaived','envelope-ineligible-waived','envelope-exit-zero','envelope-exit-three'):
   reason=dict(code='FINAL_REVIEW_FALLBACK',explanation='No eligible unused final family remains; a reviewer-only family may provide final.',waived=True)
