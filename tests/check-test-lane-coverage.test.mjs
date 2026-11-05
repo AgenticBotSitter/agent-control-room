@@ -191,3 +191,21 @@ test('B8 independent wrong-name assertion fails with exact-name guard removed an
     writeFileSync(file,original);assert.equal(run().status,0);
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('B8 failed children report identity, exit state and bounded secret-filtered tails',async()=>{
+  for(const failure of [{code:7},{signal:'SIGTERM'},{failed:true},{cleaned:false}]){
+    const f=gateFixture();updateTools(f);Object.assign(f.outputs[0],failure,{
+      stdout:['old stdout',...Array.from({length:45},(_,i)=>'stdout '+i),'API_KEY=fixture-sensitive','API KEY=fixture-sensitive','PRIVATE_KEY=fixture-sensitive','passphrase=fixture-sensitive','Bearer fixture-sensitive','Set-Cookie: session=fixture-sensitive','AWS_ACCESS_KEY_ID=fixture-sensitive','ghp_fixture-sensitive','Authorization: Bearer fixture-sensitive','https://user:fixture-sensitive@example.invalid','last stdout'].join('\n'),
+      stderr:['old stderr',...Array.from({length:45},(_,i)=>'stderr '+i),'password=fixture-sensitive','-----BEGIN PRIVATE KEY-----','last stderr'].join('\n'),
+    });
+    const logs=[];let called=0;
+    assert.equal(await runB8HostGateV1({preflight:()=>f.configuration,execute:async()=>f.outputs[called++],log:l=>logs.push(l)}),1);
+    assert.equal(called,1);const output=logs.join('\n');
+    assert.match(output,/fixture -B check_b8_host_gate.py/);
+    assert.match(output,/code=/);assert.match(output,/signal=/);assert.match(output,/cleaned=/);assert.match(output,/failed=/);
+    assert.match(output,/stdout tail/);assert.match(output,/stderr tail/);
+    assert.match(output,/last stdout/);assert.match(output,/last stderr/);
+    assert.doesNotMatch(output,/old stdout|old stderr|stdout 0\n|stderr 0\n|fixture-sensitive|PRIVATE KEY/);
+    assert.ok(logs.at(-1).startsWith('HOST GATE FAIL:'));
+  }
+});

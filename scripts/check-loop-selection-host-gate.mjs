@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { isMainModuleV1 } from '../src/installer/shared/is-main-module.mjs';
 import { parseStrictJsonV1 } from '../src/installer/shared/strict-json.mjs';
 import { b8ExternalHostInventoryV1, validateB8ExternalHostTitlesV1 } from './check-test-lane-coverage.mjs';
@@ -133,6 +133,15 @@ export async function runB8HostGateV1({preflight=productionB8HostPreflightV1,exe
   try{
     const c=await preflight();
     const run=async(command,args,cwd,timeoutMs)=>{const r=await execute(command,args,{cwd,env:c.env,timeoutMs});
+      if(r.code!==0||r.signal||r.failed||r.cleaned!==true){
+        log('B8 child failed: '+basename(command)+' '+args.join(' ')+
+          ' code='+r.code+' signal='+r.signal+' failed='+r.failed+' cleaned='+r.cleaned);
+        for(const stream of ['stdout','stderr']){
+          const tail=String(r[stream]??'').trimEnd().split(/\r?\n/).slice(-40)
+            .filter(line=>!/(?:password|passwd|passphrase|secret|token|(?:api|access)[_ -]?key|authorization|bearer|cookie|credential|private[_ -]?key|\b(?:gh[pousr]_|github_pat_|xox[baprs]-|sk-[a-z0-9])|https?:\/\/[^\s/@]+:[^\s/@]+@)/i.test(line));
+          log('B8 child '+stream+' tail:\n'+tail.join('\n'));
+        }
+      }
       need(r.code===0&&!r.signal&&!r.failed&&r.cleaned===true,'child failed/timeout/signal/cleanup');return r.stdout;};
     const tools=validateB8ToolsReceiptV1(await run(c.python,['-B','check_b8_host_gate.py'],c.loop,c.timeoutMs),c.inventory,c.pins);
     const u81=validateB8ProductTapV1(await run('pnpm',['run','test:loop-selection:real'],c.root,602000),'U81 real selection check',b8U81CasesV1);
