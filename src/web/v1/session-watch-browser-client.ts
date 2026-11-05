@@ -1,11 +1,10 @@
 import { BrowserRequestError } from "./browser-client";
 import { readBrowserJson } from "./browser-json";
-import { catalogProjectIdSchema } from "./project-wire";
-import { sessionWatchPageSchemaV1 } from "./session-watch-wire";
+import { sessionWatchCursorSchemaV1, sessionWatchPageSchemaV1 } from "./session-watch-wire";
 
 /** Reads only retained cross-project run evidence. It cannot start, stop, retry, resume, approve or accept work. */
 export async function readSessionWatchV1(after?: string, transport: typeof fetch = fetch, signal?: AbortSignal) {
-  if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new BrowserRequestError("invalid_request");
+  if (after !== undefined && !sessionWatchCursorSchemaV1.safeParse(after).success) throw new BrowserRequestError("invalid_request");
   const query = after === undefined ? "" : `?after=${encodeURIComponent(after)}`;
   try {
     const response = await transport(`/api/v1/session-watch${query}`, { method: "GET", credentials: "same-origin",

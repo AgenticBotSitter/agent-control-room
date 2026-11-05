@@ -121,6 +121,48 @@ test("B2a confirmed run Start progress Stop", async () => {
   } finally { await m.close(); await f.close(); }
 });
 
+test("B5 phone ready distinguishes pre-Start from started check work", async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), /Ready to start/);
+    assert.equal(m.button("Start confirmed work").disabled, false);
+    await act(async () => m.button("Start confirmed work").click()); await settle();
+    f.edit({ state: "ready", revision: f.snapshot().revision + 1,
+      progress: { step: "site-smoke", completed: 3, attention: "none" } });
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.match(m.text(), /Working - checks running/);
+    assert.doesNotMatch(m.text(), /Ready to start/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.equal(m.button("Stop this run").disabled, false);
+  } finally { await m.close(); await f.close(); }
+});
+
+for (const reason of [
+  "TEST_INCOMPLETE: The required check did not produce a complete result.",
+  "The approved plan no longer matches the saved request. Review the request again.",
+]) test(`B5 phone blocked work preserves the engine reason: ${reason}`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    await act(async () => m.button("Start confirmed work").click()); await settle();
+    f.edit({ state: "ready", revision: f.snapshot().revision + 1,
+      progress: { step: "site-smoke", completed: 3, attention: "blocked" },
+      decisions: { gate: { kind: "blocked", code: "UNAVAILABLE", message: reason }, observedAt: new Date(now).toISOString() } });
+    const display = (await f.bridge.status(f.identity, f.project.projectId, f.requestId)).display;
+    assert.equal(display.state, "blocked");
+    assert.equal(display.attention?.code, "UNAVAILABLE");
+    assert.equal(display.attention?.message, reason);
+    await act(async () => m.button("Refresh status").click()); await settle();
+    assert.match(m.text(), /Work needs attention/);
+    assert.ok(m.text().includes(reason));
+    assert.match(m.text(), /UNAVAILABLE/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+  } finally { await m.close(); await f.close(); }
+});
+
 test("B2a lost Start reply replays frozen action after revision increases and independent Stop", async () => {
   const f = await fixture(), wire = transport(f); let lose = true;
   const m = await mount(f.project.projectId, (async (path, options) => {
@@ -658,4 +700,187 @@ test("B2a R3 stopped engine cannot admit its first website Start", async () => {
     assert.deepEqual(f.calls.filter(x => x !== "status"), []);
     assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_loop_improvement_commands")).rows[0]!.n, 0);
   } finally { await f.close(); }
+});
+
+
+test("B5 failed desk load gives an actionable retry and no endless loading", async () => {
+  const f = await fixture(), wire = transport(f); let fail = true;
+  const m = await mount(f.project.projectId, ((input, options) => fail
+    ? Promise.resolve(Response.json({}, { status: 503 })) : wire.fetcher(input, options)) as typeof fetch);
+  try {
+    await settle();
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+    assert.match(m.text(), /could not be checked/i);
+    assert.ok(m.button("Retry loading desk"));
+    fail = false;
+    await act(async () => m.button("Retry loading desk").click()); await settle();
+    assert.ok(m.button("Start confirmed work"));
+  } finally { await m.close(); await f.close(); }
+});
+
+test("B5 desk loading watchdog bounds a stuck read and recovers on retry", async t => {
+  const f = await fixture(), wire = transport(f);
+  const original = client.readDesk;
+  client.readDesk = async () => new Promise<never>(() => {});
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    assert.match(m.text(), /Loading saved improvement desk/);
+    await act(async () => { t.mock.timers.tick(15_000); });
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+    assert.match(m.text(), /taking too long/i);
+    assert.ok(m.button("Retry loading desk"));
+    client.readDesk = original; t.mock.timers.reset();
+    await act(async () => m.button("Retry loading desk").click()); await settle();
+    assert.ok(m.button("Start confirmed work"));
+  } finally { await m.close(); await f.close(); client.readDesk = original; t.mock.timers.reset(); }
+});
+
+test("B5 refused first planning step renders reason and recovery without Start authority", async () => {
+  const f = await fixture(), wire = transport(f);
+  f.edit({ state: "refused", confirmation: null, progress: { step: "orchestrator", completed: 0, attention: "blocked" },
+    decisions: { observedAt: new Date(now).toISOString(), gate: { kind: "blocked", code: "UNAVAILABLE",
+      message: "The first planning step could not start because the launch checks rejected the request." } } });
+  const m = await mount(f.project.projectId, wire.fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), /first planning step could not start/);
+    assert.match(m.text(), /Check the project settings, then use Prepare request to retry/);
+    assert.match(m.text(), /Prepare request/);
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.doesNotMatch(m.text(), /Loading saved improvement desk/);
+  } finally { await m.close(); await f.close(); }
+});
+
+for (const pending of [true, false]) test(`B5 unlinked intake renders ${pending ? "progress" : "timeout"} without owner command authority`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const attention = pending ? { code: "INTAKE_IN_PROGRESS", message: "Intake in progress.",
+    nextAction: "Wait while the saved request is linked. This status is limited to two minutes from intake." }
+    : { code: "INTAKE_TIMEOUT", message: "Intake could not be confirmed within two minutes.",
+      nextAction: "Reload this page to check whether your request is ready. If it is still not linked, use Prepare request to try again." };
+  const local = { ...saved, request: { ...saved.request, runLink: null, savedAuthorization: false },
+    display: { ...saved.display, runLinkId: null, state: pending ? null : "blocked", startState: "not_started",
+      confirmationCurrent: false, canStart: false, canStop: false, attention },
+    engine: { ...saved.engine, state: pending ? "draft" : "refused", confirmation: null },
+    decisions: { gate: pending ? null : { kind: "blocked", code: "UNAVAILABLE", message: attention.message }, observedAt: saved.display.observedAt } };
+  const fetcher = (async (input, options) => {
+    const path = String(input);
+    if (path.endsWith(`/${encodeURIComponent(f.requestId)}/status`)) return Response.json(local);
+    const response = await wire.fetcher(input, options);
+    if (path.endsWith("/loop/desk")) {
+      const desk = await response.json();
+      return Response.json({ ...desk, loopRequests: desk.loopRequests.map((row: typeof saved.request) => ({ ...row, runLink: null, savedAuthorization: false })) });
+    }
+    return response;
+  }) as typeof fetch;
+  const m = await mount(f.project.projectId, fetcher);
+  try {
+    await settle();
+    assert.match(m.text(), pending ? /Intake in progress\./ : /Intake could not be confirmed within two minutes\./);
+    assert.ok(m.text().includes(attention.nextAction));
+    if (!pending) assert.ok(m.button("Prepare request"), "the suggested phone control is present");
+    assert.ok([...m.dom.window.document.querySelectorAll(pending ? '[role="status"]' : '[role="alert"]')]
+      .some(node => node.textContent?.includes(attention.message)));
+    assert.equal(m.button("Start confirmed work"), undefined); assert.equal(m.button("Stop this run"), undefined);
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); await f.close(); }
+});
+
+// Drive the real workspace and polling hook with an intake snapshot, without
+// waiting two wall-clock minutes or starting an engine/controller process.
+for (const scenario of ["gate", "cap", "unlinked", "link", "settled", "old"] as const) test(`B5 first-gate polling ${scenario}`, async t => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const desk = await (await wire.fetcher(`/api/v1/projects/${f.project.projectId}/improvements/loop/desk`)).json();
+  const start = now;
+  const unlinked = scenario === "unlinked" || scenario === "link";
+  desk.loopRequests = desk.loopRequests.map((row: typeof saved.request) => ({ ...row,
+    createdAt: new Date(start - (scenario === "old" ? 120_001 : 0)).toISOString(),
+    savedAuthorization: scenario === "settled", ...(unlinked ? { runLink: null } : {}) }));
+  let gate = false;
+  const reads: { status: number[]; desk: number[] } = { status: [], desk: [] };
+  const fetcher = (async (input, options) => {
+    assert.equal(options?.method ?? "GET", "GET", "polling never issues a command");
+    const path = String(input);
+    if (path.endsWith("/loop/desk")) { reads.desk.push(Date.now()); return Response.json(desk); }
+    if (path.endsWith("/status")) {
+      reads.status.push(Date.now());
+      return Response.json({ ...saved, request: desk.loopRequests[0],
+        display: { ...saved.display, ...(!desk.loopRequests[0].runLink ? { runLinkId: null } : {}),
+          state: scenario === "settled" ? "ready" : null, confirmationCurrent: scenario === "settled", canStart: false, canStop: false },
+        engine: { ...saved.engine, state: scenario === "settled" ? "ready" : "draft", confirmation: null },
+        decisions: { observedAt: saved.display.observedAt, gate: gate ? { kind: "confirm" } : null } });
+    }
+    return Response.json({}, { status: 404 });
+  }) as typeof fetch;
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: start });
+  const flush = async () => { await act(async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); }); };
+  const tick = async (ms: number) => { await act(async () => { t.mock.timers.tick(ms); }); await flush(); };
+  const m = await mount(f.project.projectId, fetcher, `#request=${encodeURIComponent(f.requestId)}`);
+  try {
+    await flush();
+    assert.ok(reads.status.length > 0, "initial status read accepted");
+    if (scenario === "settled" || scenario === "old") {
+      const before = reads.status.length;
+      await tick(5_000);
+      assert.equal(reads.status.length, before, "settled and old work keep ordinary cadence");
+    } else {
+      const before = reads.status.length;
+      await tick(2_500); await tick(2_500);
+      assert.ok(reads.status.length >= before + 2, "unchanged first-gate status polls every 2.5 seconds");
+      if (scenario === "gate") {
+        gate = true; await tick(2_500);
+        assert.ok(m.button("Confirm this exact request"), "gate appears promptly from status polling");
+        const afterGate = reads.status.length;
+        gate = false; // Later snapshots cannot reopen the first-gate window.
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.status.length, afterGate, "first gate restores ordinary cadence");
+      } else if (scenario === "link") {
+        desk.loopRequests[0].runLink = saved.request.runLink;
+        await tick(2_500);
+        const afterLink = reads.desk.length;
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.desk.length, afterLink, "linked request restores ordinary desk cadence");
+      } else {
+        if (unlinked) assert.ok(reads.desk.length >= 3, "missing link refreshes desk promptly");
+        for (let i = 0; i < 46; i++) await tick(2_500);
+        const afterCap = { status: reads.status.length, desk: reads.desk.length };
+        await tick(2_500); await tick(2_500);
+        assert.equal(reads.status.length, afterCap.status, "two-minute cap restores status cadence");
+        assert.equal(reads.desk.length, afterCap.desk, "two-minute cap restores desk cadence");
+        await tick(25_000);
+        assert.ok(reads.status.length > afterCap.status, "ordinary polling continues after cap");
+      }
+    }
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); t.mock.timers.reset(); await f.close(); }
+});
+
+for (const state of ["draft", "failed"] as const) test(`B5 prepared request status text: ${state}`, async () => {
+  const f = await fixture(), wire = transport(f);
+  const saved = await f.bridge.status(f.identity, f.project.projectId, f.requestId);
+  const m = await mount(f.project.projectId, (async (path, options) => {
+    if (!String(path).endsWith("/status")) return wire.fetcher(path, options);
+    if (state === "failed") return Response.json({}, { status: 503 });
+    return Response.json({ ...saved,
+      display: { ...saved.display, state: null, confirmationCurrent: false, canStart: false, canStop: false },
+      engine: { ...saved.engine, state: "draft", confirmation: null },
+      decisions: { observedAt: saved.display.observedAt, gate: { kind: "confirm" } } });
+  }) as typeof fetch);
+  try {
+    await settle();
+    if (state === "draft") {
+      assert.match(m.text(), /Request prepared; awaiting your confirmation/);
+      assert.doesNotMatch(m.text(), /Saved progress could not be checked/);
+      assert.equal(m.button("Confirm this exact request").disabled, false);
+    } else {
+      assert.match(m.text(), /Saved progress could not be checked/);
+      assert.doesNotMatch(m.text(), /Request prepared; awaiting your confirmation/);
+      assert.equal(m.button("Confirm this exact request"), undefined);
+    }
+    assert.equal(m.button("Start confirmed work").disabled, true);
+    assert.equal(m.button("Stop this run").disabled, true);
+    assert.equal(wire.posts.length, 0);
+  } finally { await m.close(); await f.close(); }
 });

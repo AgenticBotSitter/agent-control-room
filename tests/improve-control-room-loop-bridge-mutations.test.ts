@@ -53,7 +53,7 @@ const probes=[
     find:'checkedPath(c.settingsFile, c.configRoot);',replace:'/* MUTANT: omit configured settings path fence. */',
     pattern:"B1b configured execution/path fence",assertion:"B1b configured symlink refusal",postgres:false},
   {name:"configured executable pin",file:"src/web/v1/improve-control-room-loop-adapter.ts",
-    find:'|| loopByteHashV1(readFileSync(c.entrypoint)) !== c.entrypointSha256',replace:'|| false',
+    find:'[c.entrypoint, c.entrypointSha256, "entrypoint_pin_changed"],',replace:'/* MUTANT: omit executable pin. */',
     pattern:"B1b configured executable pin guard",assertion:"B1b changed executable refuses construction before any command",postgres:false},
   {name:"freshness at actual spawn",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'if (elapsed < 0 || elapsed >= this.#freshness) throw unavailable();',replace:'if (false) throw unavailable();',
@@ -70,7 +70,7 @@ const probes=[
     pattern:"B1a loop desk returns only",assertion:"same-project requests from another creator are excluded",postgres:true,
     testFile:"tests/improve-control-room-desk-postgres.test.ts"},
   {name:"active command cleanup fence",file:"src/web/v1/improve-control-room-loop-adapter.ts",
-    find:'|| activeCommands.has(commandId)) throw unavailable();',replace:'|| false) throw unavailable();',
+    find:'|| activeCommands.has(commandId)) throw unavailable("command_release_invalid");',replace:'|| false) throw unavailable("command_release_invalid");',
     pattern:"B1b cleanup refuses a command",assertion:"active command cannot be reclaimed",postgres:false},
   {name:"completed command cleanup",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'\n    await this.#releaseCommandFiles(claim);',replace:'\n    /* MUTANT: retain completed command files. */',
@@ -86,10 +86,14 @@ const probes=[
     find:'loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);',replace:'true;',
     pattern:"^B1b split loop and legacy",assertion:"hosted composition refuses a split loop key",postgres:false},
 ];
-test("B1b guard-off proofs with restored green checks",{timeout:550000,concurrency:2},async t=>{
+// Saved CI exhausted 550s during probe 25; its serial non-PG group needs
+// about 24 * 28s = 672s. A 900s parent leaves 228s (34%) over that estimate.
+// R13's complete local run took 283.2s, so local speed is not the CI budget.
+// package.json allows 960s, and CI allows 17 minutes, for teardown headroom.
+test("B1b guard-off proofs with restored green checks",{timeout:900000,concurrency:2},async t=>{
   await mkdir(resolve(".test-tmp"),{recursive:true});const copies:string[]=[];
   try{
-    // PostgreSQL setup dominates this lane. Each group owns an independent
+    // The serial non-PG group dominates the saved CI run. Each group owns an independent
     // clean copy; every baseline, mutation and restored check is preserved.
     const groups=await Promise.allSettled([false,true].map(async postgres=>{
     const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));copies.push(copy);

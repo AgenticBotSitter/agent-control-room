@@ -4,6 +4,8 @@
 // provisions accounts, reads credentials, installs, delivers, pushes or chooses a
 // role. Exit 0 only with complete verified proof; otherwise a safe refusal line.
 import { fileURLToPath } from "node:url";
+import { createFirstWebsiteControllerOwnerV1, runFirstWebsiteJourneyV1 } from "./first-website-controller";
+import { B5DeviceRefusalV1 } from "./first-website-device";
 import { B5RefusalV1, preflightFirstWebsiteV1 } from "../../tests/helpers/improve-control-room-first-website";
 
 function parseArguments(argv: readonly string[]) {
@@ -20,21 +22,19 @@ function parseArguments(argv: readonly string[]) {
 
 async function main() {
   const args = parseArguments(process.argv.slice(2));
-  await preflightFirstWebsiteV1({ ...args, cliFile: fileURLToPath(import.meta.url) });
-  // The device-journey controller is not built yet. It will import the assembly through
-  // loadFirstWebsiteAssemblyV1 under a maxDurationMs signal, run probeBindInputCapabilityV1
-  // before intake, bind both scoped inputs with bindFirstWebsiteInputsV1 after intake and
-  // before confirmation, check assertRoleScopedBriefsV1 after dispatch, and finish with
-  // verifyFirstWebsiteEvidenceV1. Until then nothing past preflight runs: no import, intake
-  // or paid work that could not reach a verified end.
-  throw new B5RefusalV1("B5_JOURNEY_CONTROLLER_UNBOUND");
+  const owner = createFirstWebsiteControllerOwnerV1();
+  try {
+    const preflight = await preflightFirstWebsiteV1({ ...args, cliFile: fileURLToPath(import.meta.url), signalOwner: owner });
+    const verdict = await runFirstWebsiteJourneyV1({ ...preflight, controllerOwner: owner }, owner.signal);
+    if (verdict.state !== "complete") throw new B5RefusalV1(verdict.reasons[0] ?? "B5_PROOF_INCOMPLETE");
+  } finally { await owner.cleanup(); owner.dispose(); }
 }
 
 try {
   await main();
   console.log("OK: disposable website proof complete");
 } catch (error) {
-  const code = error instanceof B5RefusalV1 ? error.code : "B5_INTERNAL";
+  const code = error instanceof B5RefusalV1 || error instanceof B5DeviceRefusalV1 ? error.code : "B5_INTERNAL";
   console.log(`FAILED: ${code}; proof retained`);
   process.exitCode = 1;
 }

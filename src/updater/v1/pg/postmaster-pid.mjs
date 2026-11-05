@@ -28,6 +28,7 @@
 
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { shellArgumentV1 } from "../../../pg-runtime/v1/pg-path-quoting.mjs";
 
 /**
  * `postmaster.pid`, read the way PostgreSQL writes it, and only the fields this
@@ -137,9 +138,11 @@ export function isRuntimeProgramCommandV1(command, binDirectories) {
     || (/^(?:\/bin\/)?sh -c (?:exec )?"/u.test(command) && command.includes(`"${directory}/`)));
 }
 
-/** The quoted and unquoted forms, because `pg_ctl` and `postgres` write both. */
+/** Legacy argv plus the exact shell spelling pgCtlInvocationV1 puts inside -o. */
 export function namesDataDirectoryV1(command, data) {
-  return command.includes(` -D ${data} `) || command.endsWith(` -D ${data}`) || command.includes(` -D "${data}"`);
+  const shellOption = ` -D ${shellArgumentV1(data)}`;
+  return command.includes(` -D ${data} `) || command.endsWith(` -D ${data}`) || command.includes(` -D "${data}"`)
+    || command.includes(`${shellOption} `) || command.endsWith(shellOption);
 }
 
 /** Every runtime program on this data directory as this account, plus descendants. */

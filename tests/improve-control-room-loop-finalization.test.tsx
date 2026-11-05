@@ -37,6 +37,7 @@ if (ordinary) test("B3c terminal run reaches shared attention without a browser 
 
 import { finalizationFixture, persistentFinalizationCapability, ownedCleanupCapability, KEY, type FixtureState } from "./helpers/improve-control-room-loop-finalization";
 import { createImproveControlRoomLoopFinalizerV1, captureLoopFinalizationCapabilityV1, verifyFinalizationRecordV1,
+  readLoopFinalizationFailureV1, rememberLoopFinalizationFailureV1, effectiveLoopFinalizationReasonV1, loopFinalizationFailureReasonSchemaV1,
   type LoopFinalizationCapabilityV1, type LoopFinalizationRecordV1 } from "../src/web/v1/improve-control-room-loop-finalization";
 import { loopAttentionKey, loopAttentionComplete, loopAttentionItemSchemaV1 } from "../src/web/v1/improve-control-room-loop-attention-wire";
 import { readFile, writeFile, rm } from "node:fs/promises";
@@ -51,7 +52,7 @@ import type { TestContext } from "node:test";
 async function using(t:TestContext){const f=await finalizationFixture();t.after(f.close);return f;}
 const signal=()=>new AbortController().signal;
 async function direct(f:Awaited<ReturnType<typeof finalizationFixture>>,capability:LoopFinalizationCapabilityV1=f.capability,
-  publish=f.publish,authorize=async()=>f.target){
+  publish:Parameters<typeof createImproveControlRoomLoopFinalizerV1>[0]["publishCompletion"]=f.publish,authorize=async()=>f.target){
   return createImproveControlRoomLoopFinalizerV1({capability,publishCompletion:publish,authorize,signal:signal()}).finalize(f.target);
 }
 if(ordinary){
@@ -318,6 +319,74 @@ if(ordinary){
     assert.equal(custody,0,"B3c forbidden quiescent admission custody count is zero");
     assert.equal(publications,0);
   });
+  test("B3c a cross-revision record is readable but cannot render as current lifecycle attention",async t=>{
+    const f=await using(t);await f.observe();
+    const prior=(await f.capability.readRecord(f.target))!,revision=f.target.expectedRevision+1;
+    f.editStatus({revision});
+    f.state.target={...f.target,expectedRevision:revision};
+    f.state.observation={...f.state.observation,binding:{...f.state.observation.binding,expectedRevision:revision}};
+    await f.save();
+    // Verification accepts the predecessor; only the service's observation join
+    // must prevent its publication/cleanup from appearing as current attention.
+    assert.deepEqual(verifyFinalizationRecordV1(prior,f.state.target),prior);
+    assert.deepEqual(await f.capability.readRecord(f.state.target),prior);
+    const current=await f.capability.inspect(f.state.target);
+    assert.equal(current.observation.binding.eventDigest,prior.binding.eventDigest);
+    assert.notDeepEqual(current.observation,prior.observation);
+    let reads=0,stored:LoopFinalizationRecordV1|null=prior;
+    const capability={...f.capability,readRecord:async(target:typeof f.target)=>{
+      reads++;assert.deepEqual(target,f.state.target);return stored;
+    }};
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    t.after(()=>bridge.close());
+    const source=await bridge.readAttention(f.identity);
+    assert.equal(reads,1,"service reaches the stored-record observation join");
+    assert.equal(source.state,"available");if(source.state!=="available")throw Error("attention unavailable");
+    assert.equal(source.items.length,1);
+    assert.equal(source.items[0]!.kind,"blocked");
+    assert.deepEqual(source.items[0]!.identity,{kind:"blocked",code:"UNAVAILABLE"});
+    assert.equal("candidate" in source.items[0]!,false);
+    stored=null;
+    const withoutRecord=await bridge.readAttention(f.identity);
+    assert.equal(withoutRecord.state,"available");if(withoutRecord.state!=="available")throw Error("attention unavailable");
+    assert.equal(withoutRecord.items[0]!.kind,"stall","current inspection is renderable without the stale record");
+    assert.deepEqual(await f.capability.readRecord(f.state.target),prior,"GET never updates the predecessor");
+  });
+  test("B3c a newer stored record degrades service attention to blocked UNAVAILABLE",async t=>{
+    const f=await using(t),future={...f.target,expectedRevision:f.target.expectedRevision+1};
+    f.state.target=future;f.state.ended=false;
+    f.state.observation={...f.state.observation,binding:{...f.state.observation.binding,expectedRevision:future.expectedRevision},
+      outcome:"uncertain",reasonCode:"UNAVAILABLE",completionDigest:null};await f.save();
+    const newer=await createImproveControlRoomLoopFinalizerV1({capability:f.capability,authorize:async()=>future,
+      signal:signal(),publishCompletion:f.publish}).finalize(future);
+    assert.ok(newer);assert.deepEqual(verifyFinalizationRecordV1(newer,future),newer);
+    assert.throws(()=>verifyFinalizationRecordV1(newer,f.target),/loop_finalization_unavailable/);
+    // Simulate status read at N followed by a stored-record read from N+1.
+    f.state.target=f.target;
+    f.state.observation={...f.state.observation,binding:{...f.state.observation.binding,expectedRevision:f.target.expectedRevision}};
+    await f.save();
+    const before=await readFile(join(f.retained,"finalization-record.json"));
+    let reads=0,stored:LoopFinalizationRecordV1|null=newer;
+    const capability={...f.capability,readRecord:async(target:typeof f.target)=>{
+      reads++;assert.deepEqual(target,f.target);return stored;
+    },retain:async()=>{throw Error("GET must never retain");},appendRecord:async()=>{throw Error("GET must never append");}};
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    t.after(()=>bridge.close());
+    const source=await bridge.readAttention(f.identity);
+    assert.equal(reads,1,"service reaches the newer stored record");
+    assert.equal(source.state,"available");if(source.state!=="available")throw Error("attention unavailable");
+    assert.equal(source.items.length,1);assert.equal(source.items[0]!.kind,"blocked");
+    assert.deepEqual(source.items[0]!.identity,{kind:"blocked",code:"UNAVAILABLE"});
+    assert.equal("candidate" in source.items[0]!,false);
+    stored=null;
+    const withoutRecord=await bridge.readAttention(f.identity);
+    assert.equal(reads,2);assert.equal(withoutRecord.state,"available");
+    if(withoutRecord.state!=="available")throw Error("attention unavailable");
+    assert.equal(withoutRecord.items[0]!.kind,"stall","same inspection renders when the newer record is withdrawn");
+    assert.deepEqual(await readFile(join(f.retained,"finalization-record.json")),before,"GET never writes the newer stored record");
+  });
   test("B3c late revoked owner clears lifecycle result",async t=>{
     const f=await using(t);await f.observe();
     const c={...f.capability,readRecord:async(target:typeof f.target)=>{
@@ -466,7 +535,7 @@ def trace(frame, event, arg):
         if (side == 'before' and event == 'call') or (side == 'after' and event == 'return'):
             os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)
     if point == 'journal' and name == 'save_run' and frame.f_back.f_code.co_name == 'close_run':
-        close = frame.f_locals.get('st', {}).get('close', {})
+        close = frame.f_locals.get('state', {}).get('close', {})
         if close.get('state') == 'closing' and all(m['state'] == 'intent' for m in close['moves']):
             if (side == 'before' and event == 'call') or (side == 'after' and event == 'return'):
                 os.write(2, ('I1_CRASH '+point+' '+side+'\n').encode()); os._exit(86)
@@ -622,7 +691,10 @@ if(process.env.CONTROL_ROOM_B3C_LOAD==="1")test("B3c 24 finalizers retain once a
   let publications=0;
   const waitFor=async(predicate:()=>boolean)=>{
     const deadline=Date.now()+60000;
-    while(!predicate()){assert.ok(Date.now()<deadline,"B3c measured host barrier reached");await new Promise(r=>setTimeout(r,10));}
+    while(!predicate()){
+      assert.equal(events.filter(e=>["error","host-error","publisher-error"].includes(e.kind)).length,0,"B3c hosts report no unexpected errors before the barrier");
+      assert.ok(Date.now()<deadline,"B3c measured host barrier reached");await new Promise(r=>setTimeout(r,10));
+    }
   };
   const start=()=>{
     const child=spawn(process.execPath,["--import","tsx",join(process.cwd(),"tests/helpers/improve-control-room-loop-finalization.ts"),"--fixture-host","finalizer-host",f.retained],
@@ -680,4 +752,120 @@ if(process.env.CONTROL_ROOM_B3C_LOAD==="1")test("B3c 24 finalizers retain once a
     assert.equal((await f.client.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,1);
     console.log(`B3c load hosts=24 losing_paths=23 retained_corpora=1 publications=1 publication_requests=2 announcements=1 signals=0 removals=0 elapsed_ms=${Date.now()-began}`);
   }finally{await Promise.all([...children].map(close));}
+});
+
+if(ordinary) test("B5 finalization sweep maps publish refusal to bounded attention across services and retries",async t=>{
+  const f=await using(t), warnings:unknown[][]=[];
+  const warn=t.mock.method(console,"warn",(...args:unknown[])=>{warnings.push(args);});
+  const failing={...f.config,repository:{observe:async()=>{throw new Error("PRIVATE raw refusal /scratch/private");}}};
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,adapter:f.adapter,loopCandidates:failing},()=>now);
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,observe:bridge.finalizationPort().observe,
+    port:{scan:async()=>({targets:[f.internalTarget],nextCursor:null}),reconcile:async()=>({state:"blocked"})},
+    createCycle:()=>({tick(){},close:async()=>{}})});
+  t.after(()=>worker.close());
+  await worker.tick();await worker.tick();
+  const record=await f.capability.readRecord(f.target);
+  assert.equal(record?.phase,"terminated");assert.equal(record.sequence,2);
+  const attention=await f.service().readAttention(f.identity);
+  assert.equal(attention.state,"available");
+  if(attention.state!=="available")throw new Error("missing attention");
+  assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,"PUBLICATION_VERIFY_FAILED");
+  assert.deepEqual(warnings,Array.from({length:2},()=>[
+    ["loop_finalization_failed","PUBLICATION_VERIFY_FAILED","Error","unclassified_error"],
+    ["loop_finalization_sweep_failed","PUBLICATION_VERIFY_FAILED","Error","unclassified_error"],
+  ]).flat());
+  assert.doesNotMatch(JSON.stringify(warnings),/PRIVATE|scratch/);
+  assert.ok(!JSON.stringify(attention).includes("PRIVATE"));warn.mock.restore();
+  await f.observe();
+  assert.equal((await f.capability.readRecord(f.target))?.phase,"cleanup");
+  assert.equal(readLoopFinalizationFailureV1(f.target),undefined,"successful sweep clears the diagnostic");
+});
+
+if(ordinary) for(const [stage,reason] of [["inspect","UNAVAILABLE"],["retain","RETENTION_FAILED"],["cleanup","CLEANUP_UNCERTAIN"]] as const){
+  test(`B5 finalization ${stage} refusal reaches bounded current attention`,async t=>{
+    const f=await using(t);
+    let fail=true;
+    const capability={...f.capability,[stage]:async(...args:unknown[])=>{
+      if(fail)throw new Error("PRIVATE stage failure /scratch/private");
+      return Reflect.apply(f.capability.inspect,f.capability,args);
+    }} as LoopFinalizationCapabilityV1;
+    const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+      adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+    await assert.rejects(bridge.finalizationPort().observe(f.internalTarget,signal()),{message:"loop_finalization_unavailable",reasonCode:reason});
+    assert.equal(readLoopFinalizationFailureV1(f.target),reason);
+    assert.equal(readLoopFinalizationFailureV1({...f.target,expectedRevision:f.target.expectedRevision+1}),undefined);
+    // Inspection can recover before the next sweep; attention still reports the
+    // failed stage without echoing any exception fields or starting effects.
+    fail=false;
+    const attention=await f.service().readAttention(f.identity);
+    assert.equal(attention.state,"available");
+    if(attention.state!=="available")throw new Error("missing attention");
+    assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,reason);
+    assert.ok(!JSON.stringify(attention).includes("PRIVATE"));
+  });
+}
+
+if(ordinary) test("B5 finalization durable publication wins over a stale cached failure in attention",async t=>{
+  const f=await using(t);
+  const capability={...f.capability,cleanup:async()=>{throw new Error("PRIVATE cleanup failure");}} as LoopFinalizationCapabilityV1;
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,f.scope,{integrityKey:KEY,
+    adapter:{...f.adapter,finalization:capability},loopCandidates:f.config},()=>now);
+  await assert.rejects(bridge.finalizationPort().observe(f.internalTarget,signal()),{reasonCode:"CLEANUP_UNCERTAIN"});
+  const record=await f.capability.readRecord(f.target);
+  assert.equal(record?.phase,"announced");assert.ok(record.publication);assert.equal(record.cleanup,null);
+  // Stale earlier-stage failure left in the process-local cache after publication is durable.
+  rememberLoopFinalizationFailureV1(f.target,"PUBLICATION_UNAVAILABLE");
+  assert.equal(effectiveLoopFinalizationReasonV1(f.target,record),null);
+  const attention=await f.service().readAttention(f.identity);
+  assert.equal(attention.state,"available");
+  if(attention.state!=="available")throw new Error("missing attention");
+  assert.equal("reasonCode" in attention.items[0]! && attention.items[0].reasonCode,"FINISHED");
+  assert.equal(attention.items[0]!.kind,"finish");
+  // A cached failure that is at least as late as the durable stage still shows.
+  rememberLoopFinalizationFailureV1(f.target,"CLEANUP_UNCERTAIN");
+  assert.equal(effectiveLoopFinalizationReasonV1(f.target,record),"CLEANUP_UNCERTAIN");
+  rememberLoopFinalizationFailureV1(f.target,null);
+});
+
+if(ordinary) test("B5 finalization failure code schema accepts only bounded finalization stages",()=>{
+  assert.deepEqual([...loopFinalizationFailureReasonSchemaV1.options].sort(),["CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","RETENTION_FAILED","UNAVAILABLE",
+    "PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED",
+    "PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"].sort());
+  assert.equal(loopFinalizationFailureReasonSchemaV1.catch("UNAVAILABLE").parse("FINISHED"),"UNAVAILABLE");
+});
+
+const publicationStageReasons = {
+  prepare:"PUBLICATION_PREPARE_FAILED", verify:"PUBLICATION_VERIFY_FAILED", record:"PUBLICATION_RECORD_FAILED",
+} as const;
+if(ordinary) for(const stage of ["prepare","verify","record"] as const) test(`B5 publication ${stage} failure preserves stage and bounded cause`,async t=>{
+  const f=await using(t), warnings:unknown[][]=[];
+  t.mock.method(console,"warn",(...args:unknown[])=>warnings.push(args));
+  const cause=new Error("loop_candidate_integrity_failed");
+  await assert.rejects(direct(f,f.capability,async(_input,onStage)=>{
+    onStage?.(stage);throw cause;
+  }),{reasonCode:publicationStageReasons[stage],cause});
+  assert.deepEqual(warnings,[["loop_finalization_failed",publicationStageReasons[stage],"Error","loop_candidate_integrity_failed"]]);
+});
+if(ordinary) for(const stage of ["verifyPublication","published-append","announced-append"] as const) test(`B5 publication ${stage} failure has its own bounded code`,async t=>{
+  const f=await using(t), warnings:unknown[][]=[];
+  t.mock.method(console,"warn",(...args:unknown[])=>warnings.push(args));
+  const codes={verifyPublication:"PUBLICATION_VERIFY_PUBLICATION_FAILED","published-append":"PUBLICATION_PUBLISHED_APPEND_FAILED","announced-append":"PUBLICATION_ANNOUNCED_APPEND_FAILED"};
+  const capability={...f.capability,appendRecord:async(binding:Parameters<typeof f.capability.appendRecord>[0],record:Parameters<typeof f.capability.appendRecord>[1])=>{
+    if(record.phase===(stage==="published-append"?"published":stage==="announced-append"?"announced":"never"))throw new Error("PRIVATE /scratch/private");
+    return f.capability.appendRecord(binding,record);
+  }};
+  const publish=async()=>{const receipt=await f.publish();return stage==="verifyPublication"?{...receipt,engineRevision:receipt.engineRevision+1}:receipt;};
+  await assert.rejects(direct(f,capability,publish),{reasonCode:codes[stage]});
+  assert.equal(warnings.length,1);assert.equal(warnings[0]![1],codes[stage]);
+  assert.doesNotMatch(JSON.stringify(warnings),/PRIVATE|scratch/);
+});
+
+if(ordinary) test("B5 diagnostic logging bounds unknown errors and preserves fixed causes",async()=>{
+  const {loopFinalizationErrorDiagnosticV1,LoopFinalizationFailureV1}=await import("../src/web/v1/improve-control-room-loop-finalization");
+  class UntrustedClass extends Error {}
+  for(const error of [new UntrustedClass("PRIVATE /scratch/private"),"PRIVATE /scratch/private",null])
+    assert.deepEqual(loopFinalizationErrorDiagnosticV1(error),["UnknownError","unclassified_error"]);
+  const cause=new Error("loop_adapter_unavailable");
+  const wrapped=new LoopFinalizationFailureV1("PUBLICATION_RECORD_FAILED",cause);
+  assert.deepEqual(loopFinalizationErrorDiagnosticV1(wrapped),["Error","loop_adapter_unavailable"]);
 });

@@ -1,3 +1,4 @@
+import { shellArgumentV1 } from "../../../pg-runtime/v1/pg-path-quoting.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
@@ -166,7 +167,7 @@ async function guardFixture(root, config) {
   await pairRoot(root);
   const bin = join(root, "fake-bin"), log = join(root, "launchctl.log");
   await mkdir(bin); await mkdir(join(root, "fake-plists"));
-  await executable(join(bin, "launchctl"), `printf '%s\\n' "$*" >> '${log}'; echo 'state = running'; echo 'pid = 123'`);
+  await executable(join(bin, "launchctl"), `printf '%s\\n' "$*" >> ${shellArgumentV1(log)}; echo 'state = running'; echo 'pid = 123'`);
   await executable(join(bin, "stat"), guardStatStandInV1({ mtime: "echo 0" }));
   await executable(join(bin, "id"), 'echo 123');
   await writeFile(join(root, `fake-plists/${config.daemonLabelPrefix}.postgres.plist`),

@@ -140,13 +140,13 @@ test('S1 roster change invalidates mappings',async t=>{
  await assert.rejects(f.service.revalidate(f.identity,{providerId:'provider-one',model:'synthetic/model'}),{reason:'roster_mismatch'});
 });
 test('S1 down is empty-only and retained provider model or state rolls back atomically',async t=>{
- const f=await fixture(t);const down=await readFile('db/down/0308_control_loop_providers.sql','utf8');
+ const f=await fixture(t);const down=await readFile('db/down/0312_control_loop_providers.sql','utf8');
  assert.equal((await f.put(0)).status,201);const saved=await f.rows();
  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');assert.deepEqual(await f.rows(),saved);
  await f.db.query('DELETE FROM control_loop_provider_models');await f.db.query('DELETE FROM control_loop_providers');
  await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');
  await f.db.query('DELETE FROM control_loop_provider_state');
- await f.db.exec(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));await f.db.exec(down);
+ await f.db.exec(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));await f.db.exec(down);
  assert.equal((await f.db.query("SELECT * FROM pg_tables WHERE tablename LIKE 'control_loop_provider%'")).rows.length,0);
 });
 for(const mode of ['private','Mac-local'] as const)test(`S1 ${mode} Node actual provider and policy PUT persistence and refusal`,async t=>{
@@ -415,7 +415,7 @@ test('S2 refresh rejects operator non-human malformed content and CSRF without t
 test('S2 price down refuses retained price or fetch atomically and accepts empty',async t=>{
   const f=await priceFixture(t,{fetch:async()=>Response.json(priceDocument())});
   await f.service.upsert(f.identity,'provider-one',{expectedVersion:0,provider:priceProvider()},key());await f.refresh(1);
-  const down=await readFile('db/down/0309_control_loop_provider_prices.sql','utf8');
+  const down=await readFile('db/down/0313_control_loop_provider_prices.sql','utf8');
   const before=await f.service.view(f.identity);
   await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');assert.deepEqual(await f.service.view(f.identity),before);
   await f.db.query('DELETE FROM control_loop_provider_prices');await assert.rejects(f.db.exec(down),{code:'23514'});await f.db.exec('ROLLBACK');

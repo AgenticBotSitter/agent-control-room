@@ -2,7 +2,7 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security";
 import { loopRecoveryBindingSchemaV1 } from "./improve-control-room-loop-adapter";
 import { loopCandidateCompletionReceiptSchemaV1, type LoopCandidateCompletionReceiptV1 } from "../../improve-control-room/v1/loop-candidate-wire";
-import type { LoopCandidateDependenciesV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
+import type { LoopCandidateDependenciesV1, LoopCandidatePublicationStageV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import type { LoopRecoveryTargetV1 } from "./improve-control-room-loop-recovery";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -43,10 +43,55 @@ export type LoopFinalizationCapabilityV1 = LoopCandidateDependenciesV1 & {
   retain(binding:Readonly<LoopFinalizationBindingV1>,inventoryDigest:string):Promise<z.infer<typeof loopFinalizationCustodySchemaV1>>;
   /** A2 local close owns its journal and replays safely after a lost append. */
   cleanup?(binding:Readonly<LoopFinalizationBindingV1>,retentionDigest:string):Promise<z.infer<typeof loopFinalizationCleanupSchemaV1>>;
+  /** Returns this run's record from the current or any earlier revision; it is not necessarily the current observation. */
   readRecord(target:Readonly<LoopFinalizationTargetV1>):Promise<LoopFinalizationRecordV1|null>;
   /** Compare-and-append previousDigest, fsync, exact replay; never overwrite. */
   appendRecord(binding:Readonly<LoopFinalizationBindingV1>,record:Readonly<LoopFinalizationRecordV1>):Promise<LoopFinalizationRecordV1>;
 };
+// Diagnostic state is bounded, process-local and scoped to the complete authorized
+// revision. Durable receipts remain the authority after restart or supersession.
+export const loopFinalizationFailureReasonSchemaV1 = z.enum(["UNAVAILABLE","RETENTION_FAILED","PUBLICATION_UNAVAILABLE","CLEANUP_UNCERTAIN","PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED","PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"]);
+export type LoopFinalizationFailureReasonV1 = z.infer<typeof loopFinalizationFailureReasonSchemaV1>;
+// Codes name the stage in flight when the attempt stopped, not a proven failing operation.
+const failures=new Map<string,LoopFinalizationFailureReasonV1>();
+export class LoopFinalizationFailureV1 extends Error {
+  constructor(readonly reasonCode:LoopFinalizationFailureReasonV1,cause?:unknown){super("loop_finalization_unavailable",{cause});}
+}
+export function loopFinalizationFailureReasonV1(error:unknown):LoopFinalizationFailureReasonV1{
+  return error instanceof LoopFinalizationFailureV1?error.reasonCode:"UNAVAILABLE";
+}
+/** Log only exact, fixed codes. Zod/driver and adapter errors may carry raw
+ * evidence or paths, so neither arbitrary messages nor class names may escape. */
+export function loopFinalizationErrorDiagnosticV1(error:unknown):readonly [string,string]{
+  for(let depth=0;depth<8&&error instanceof LoopFinalizationFailureV1&&error.cause!==undefined;depth++)error=error.cause;
+  if(!(error instanceof Error))return ["UnknownError","unclassified_error"];
+  // PGlite bundles its DatabaseError constructor under the fixed name C.
+  const classes=["C","Error","TypeError","RangeError","WebAccessError","ZodError","DatabaseError","LoopCandidateStaleCompletionV1"];
+  const messages=["loop_candidate_unavailable","loop_candidate_integrity_failed","loop_candidate_stale",
+    "loop_adapter_unavailable","loop_bridge_contract_unavailable","loop_finalization_unavailable",
+    "loop_command_integrity_failed","loop_improvement_integrity_failed","loop_contract_unavailable",
+    "conflict","not_found","loop candidate reviews shape rejected"];
+  return [classes.includes(error.constructor.name)?error.constructor.name:"UnknownError",
+    messages.includes(error.message)?error.message:"unclassified_error"];
+}
+export function rememberLoopFinalizationFailureV1(target:LoopFinalizationTargetV1,reason:LoopFinalizationFailureReasonV1|null){
+  const key=canonicalJson(loopFinalizationTargetSchemaV1.parse(target));failures.delete(key);
+  if(reason!==null){failures.set(key,reason);if(failures.size>128)failures.delete(failures.keys().next().value!);}
+}
+export function readLoopFinalizationFailureV1(target:LoopFinalizationTargetV1){
+  return failures.get(canonicalJson(loopFinalizationTargetSchemaV1.parse(target)));
+}
+export function pendingLoopFinalizationReasonV1(record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1{
+  return record?.publication?"CLEANUP_UNCERTAIN":record?.custody?"PUBLICATION_UNAVAILABLE":record?"RETENTION_FAILED":"UNAVAILABLE";
+}
+const failureRank:Record<LoopFinalizationFailureReasonV1,number>={UNAVAILABLE:0,RETENTION_FAILED:1,PUBLICATION_UNAVAILABLE:2,CLEANUP_UNCERTAIN:3,PUBLICATION_PREPARE_FAILED:2,PUBLICATION_VERIFY_FAILED:2,PUBLICATION_RECORD_FAILED:2,PUBLICATION_VERIFY_PUBLICATION_FAILED:2,PUBLICATION_PUBLISHED_APPEND_FAILED:3,PUBLICATION_ANNOUNCED_APPEND_FAILED:3};
+/** Durable receipts win: a cached failure is used only when it is at least as far along as the
+ * stage the saved record implies, and never once cleanup is recorded. */
+export function effectiveLoopFinalizationReasonV1(target:LoopFinalizationTargetV1,record:LoopFinalizationRecordV1|null):LoopFinalizationFailureReasonV1|null{
+  const cached=readLoopFinalizationFailureV1(target);
+  if(!cached||record?.cleanup)return null;
+  return failureRank[cached]>=failureRank[pendingLoopFinalizationReasonV1(record)]?cached:null;
+}
 const unavailable=()=>new Error("loop_finalization_unavailable");
 const same=(a:unknown,b:unknown)=>canonicalJson(a)===canonicalJson(b);
 function bounded(value:unknown){if(Buffer.byteLength(JSON.stringify(value),"utf8")>65536)throw unavailable();return value;}
@@ -59,7 +104,8 @@ export function verifyFinalizationInspectionV1(raw:unknown,target:LoopFinalizati
 }
 export function verifyFinalizationRecordV1(raw:unknown,target:LoopFinalizationTargetV1){
   const r=loopFinalizationRecordSchemaV1.parse(bounded(raw)),{recordDigest,...material}=r,o=r.observation;
-  if(sha256Digest(material)!==recordDigest||!same(finalizationTargetV1(r.binding),target)||!same(r.binding,o.binding)
+  // Stored records precede the current observation; revision is not run identity.
+  if(sha256Digest(material)!==recordDigest||r.binding.expectedRevision>target.expectedRevision||!same(finalizationTargetV1(r.binding),{...target,expectedRevision:r.binding.expectedRevision})||!same(r.binding,o.binding)
     ||(r.sequence===1)!==(r.previousDigest===null))throw unavailable();
   for(const receipt of [r.custody,r.termination,r.cleanup])if(receipt&&(!same(receipt.binding,r.binding)||receipt.inventoryDigest!==o.inventoryDigest))throw unavailable();
   if(r.cleanup&&(!r.custody||r.cleanup.retentionDigest!==r.custody.retentionDigest))throw unavailable();
@@ -105,16 +151,18 @@ export type LoopFinalizationPortV1={observe(target:LoopRecoveryTargetV1,signal:A
 /** Service admission is rechecked at every asynchronous boundary. All writes
  * happen under the installation's same-run fence; GET never calls this code. */
 export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFinalizationCapabilityV1;
-  publishCompletion:(input:{runLinkId:string;completionDigest:string})=>Promise<LoopCandidateCompletionReceiptV1>;
+  publishCompletion:(input:{runLinkId:string;completionDigest:string},onStage?:(stage:LoopCandidatePublicationStageV1)=>void)=>Promise<LoopCandidateCompletionReceiptV1>;
   authorize:()=>Promise<LoopFinalizationTargetV1>;signal:AbortSignal}){
   const c=input.capability;
   return {async finalize(target:LoopFinalizationTargetV1){
+    let failureReason:LoopFinalizationFailureReasonV1="UNAVAILABLE";
+    try{
     const active=async()=>{if(input.signal.aborted||!finalizationEnabledV1(c)||!same(await input.authorize(),target))throw unavailable();};
     await active();
     const first=verifyFinalizationInspectionV1(await c.inspect(target),target);
     await active();
     if(["running","owner_gate"].includes(first.observation.outcome))return;
-    return c.withFence(first.observation.binding,async()=>{
+    return await c.withFence(first.observation.binding,async()=>{
       await active();
       const inspected=verifyFinalizationInspectionV1(await c.inspect(target),target),o=inspected.observation,b=o.binding;
       if(!same(first,inspected))throw unavailable();
@@ -122,7 +170,15 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       if(record)record=verifyFinalizationRecordV1(record,target);
       let previousRecord=record;
       if(record&&!same(record.observation,o)){
-        if(record.binding.eventDigest===b.eventDigest)throw unavailable();
+        // cr.py finalize_inspect derives outcome/reason from lifecycle state and
+        // completion_sha256 from completion facts (3659-3696); inventory_sha256
+        // hashes live steps/pending_launch (3649-3658), with revision separate (3701).
+        // The supplied eventDigest has no revision-bound guarantee. At a later
+        // revision, the same outcome/reason/completion event may refresh inventory,
+        // evidence and observation time; none of its old custody may carry forward.
+        if(record.binding.eventDigest===b.eventDigest&&(record.binding.expectedRevision===b.expectedRevision
+          ||record.observation.outcome!==o.outcome||record.observation.reasonCode!==o.reasonCode
+          ||record.observation.completionDigest!==o.completionDigest))throw unavailable();
         // A newly verified event starts with no inherited custody, publication
         // or cleanup authority, while preserving the immutable audit chain.
         record=null;
@@ -137,9 +193,10 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
         if(!same(proposed,saved))throw unavailable();record=saved;previousRecord=saved;await active();
       };
       if(!["candidate_ready","failed","stopped"].includes(o.outcome)||inspected.termination?.state!=="already-ended"){
-        if(!record)await append("announced",{termination:inspected.termination});return record;
+        if(!record){failureReason="PUBLICATION_ANNOUNCED_APPEND_FAILED";await append("announced",{termination:inspected.termination});}return record;
       }
       const retain=async()=>{
+        failureReason="RETENTION_FAILED";
         await active();const custody=loopFinalizationCustodySchemaV1.parse(bounded(await c.retain(b,o.inventoryDigest)));await active();
         if(!same(custody.binding,b)||custody.inventoryDigest!==o.inventoryDigest||record?.custody&&custody.retentionDigest!==record.custody.retentionDigest)throw unavailable();
         const current=verifyFinalizationInspectionV1(await c.inspect(target),target);await active();if(!same(current,inspected))throw unavailable();
@@ -150,14 +207,21 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       if(record!.phase==="retained")await append("terminated",{termination:inspected.termination});
       if(record!.phase==="terminated"&&o.outcome==="candidate_ready"){
         await retain();await active();
-        const publication=verifyPublication(await input.publishCompletion({runLinkId:b.runLinkId,completionDigest:o.completionDigest!}),o,custody.retentionDigest);
+        failureReason="PUBLICATION_UNAVAILABLE";
+        const receipt=await input.publishCompletion({runLinkId:b.runLinkId,completionDigest:o.completionDigest!},stage=>{
+          failureReason=({prepare:"PUBLICATION_PREPARE_FAILED",verify:"PUBLICATION_VERIFY_FAILED",record:"PUBLICATION_RECORD_FAILED"} as const)[stage];
+        });
+        failureReason="PUBLICATION_VERIFY_PUBLICATION_FAILED";
+        const publication=verifyPublication(receipt,o,custody.retentionDigest);
+        failureReason="PUBLICATION_PUBLISHED_APPEND_FAILED";
         await active();await append("published",{publication});
       }
-      if(["terminated","published"].includes(record!.phase))await append("announced");
+      if(["terminated","published"].includes(record!.phase)){failureReason="PUBLICATION_ANNOUNCED_APPEND_FAILED";await append("announced");}
       if(record!.phase==="announced"){
         let cleanup:z.infer<typeof loopFinalizationCleanupSchemaV1>;
         if(c.cleanup){
           await retain();await active();
+          failureReason="CLEANUP_UNCERTAIN";
           cleanup=loopFinalizationCleanupSchemaV1.parse(bounded(await c.cleanup(b,custody.retentionDigest)));await active();
           if(!same(cleanup.binding,b)||cleanup.inventoryDigest!==o.inventoryDigest||cleanup.retentionDigest!==custody.retentionDigest)throw unavailable();
         }else cleanup={schemaVersion:1,binding:b,inventoryDigest:o.inventoryDigest,retentionDigest:custody.retentionDigest,
@@ -166,5 +230,9 @@ export function createImproveControlRoomLoopFinalizerV1(input:{capability:LoopFi
       }
       return record;
     });
+    }catch(error){
+      console.warn("loop_finalization_failed",failureReason,...loopFinalizationErrorDiagnosticV1(error));
+      throw new LoopFinalizationFailureV1(failureReason,error);
+    }
   }};
 }

@@ -256,7 +256,13 @@ test("load: a client killed mid-statement leaves the row and its mirror agreeing
       // is the only login allowed to signal a backend; doing it from the
       // deployer would be refused and the test would silently not reproduce
       // anything.
-      const victim = as(postgres); await victim.connect();
+      const victim = as(postgres);
+      const victimErrors: NodeJS.ErrnoException[] = [];
+      // A killed socket can emit an idle-client error as well as reject a
+      // query, including ENOTCONN while end() writes its final message on macOS.
+      // Keep the listener through end(), then assert every observed error.
+      victim.on("error", (error: NodeJS.ErrnoException) => { victimErrors.push(error); });
+      await victim.connect();
       const admin = new Client(postgres.admin()); await admin.connect();
       try {
         await victim.query("BEGIN");
@@ -272,12 +278,17 @@ test("load: a client killed mid-statement leaves the row and its mirror agreeing
         assert.match(seen, /^(57P01|08006|ECONNRESET)$/u,
           `a terminated client must see a dropped-connection error, saw ${seen}`);
       } finally {
-        // `end()` on an already-dead client raises again; the connection is gone,
-        // which is the point of this case. The assertion that matters is on the
-        // DATABASE state below.
-        await victim.end().catch(() => {});
-        await admin.end().catch(() => {});
+        // Only tolerate the expected dead-socket errors from ending this victim.
+        // Always release the admin connection, even if cleanup fails its check.
+        try {
+          await victim.end().catch((error: NodeJS.ErrnoException) => {
+            assert.match(String(error.code), /^(ENOTCONN|ECONNRESET)$/u);
+          });
+        } finally { await admin.end(); }
       }
+      for (const error of victimErrors)
+        assert.match(String(error.code), /^(57P01|08006|ENOTCONN|ECONNRESET)$/u,
+          `unexpected error from the terminated client: ${error.message}`);
 
       // Whatever survived: the row and its last mirror event are one fact, and
       // the run can still move.

@@ -31,6 +31,7 @@ export async function sourceFixture(t,{version='1.0.0',commit='a'.repeat(40),exi
     ['scripts/updater/build-fixed-updater-bundle.mjs',Buffer.from('export const standIn=true;\n')],
     ['scripts/release-signing.mjs',Buffer.from('export const standIn=true;\n')],
     ['src/pg-runtime/v1/pg-cluster-layout.ts',Buffer.from('export const standIn=true;\n')],
+    ['src/pg-runtime/v1/pg-path-quoting.mjs',Buffer.from('export const standIn=true;\n')],
     // r5bk's recency reader and r7journal's jsonl-prefix are staged inputs too.
     ['src/installer/v1/nightly-backup-recency.ts',Buffer.from('export const standIn=true;\n')],
     ...['is-main-module','strict-json','rehearsal-hostname','file-custody','private-process-lock','jsonl-prefix','vapid'].map(n=>[`src/installer/shared/${n}.mjs`,Buffer.from('export const standIn=true;\n')])

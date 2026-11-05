@@ -457,7 +457,7 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
     // `desiredMacGrantsV1` refuses a source set that is not the full list of
     // role files, because a partial set would reconcile a login's grants down
     // to nothing. So it gets every file, and the filter below is what scopes the
-    // RESULT to the relations this stream added.
+    // RESULT to the relations this rollback removed.
     const sources = Object.fromEntries(await Promise.all(ROLE_FILES.map(async (name) =>
       [name, await readFile(join(REPOSITORY_ROOT, "db", "roles", name), "utf8")])));
     const reconciler = new Client(postgres.admin());
@@ -472,10 +472,17 @@ test("0209-0211 downgrade to exactly the 0208 state, and re-apply", async (t) =>
       // catalog SELECTs 0209's SECURITY INVOKER guard required - those are on
       // part 1's tables but they are 0209's grant, which is the whole reason
       // 0209's down file revokes them and this test checks it comes back. The
-      // other grants in those two files belong to tables other migrations own,
-      // and reconciling them here would be asserting about another subsystem.
+      // retry also reapplied the whole tail, whose dropped tables lost their
+      // role-file grants too. Restore those for the roles this test snapshots;
+      // the final full table/column comparisons must still match the original.
       const reconciled = new Set([...addedRelations, "control_result_file_sets", "control_result_files"]);
-      const mine = (item: string) => reconciled.has(item.split("|")[2]?.split(".").pop() ?? "");
+      const tailRelations = new Set(relationsBefore.filter(name => !targetRelations.includes(name)));
+      const mine = (item: string) => {
+        const [role, kind, object] = item.split("|");
+        const relation = object?.split(".").pop() ?? "";
+        return reconciled.has(relation)
+          || kind === "table" && ROLES.includes(role ?? "") && tailRelations.has(relation);
+      };
       await applyMacGrantDiffV1(reconciler, {
         extra: diff.extra.filter(mine),
         missing: diff.missing.filter(mine),

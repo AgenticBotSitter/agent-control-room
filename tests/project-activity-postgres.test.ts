@@ -50,7 +50,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "../src/web/v1/access-v
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 import { sha256Digest } from "../src/security";
 import { concurrently } from "./support/attack-kit";
-import { isPortConflict } from "./helpers/disposable-postgres-cluster";
+import { findFreePort, isPortConflict } from "./helpers/disposable-postgres-cluster";
 
 // This file provisions its OWN disposable PostgreSQL 17 cluster in a temp
 // directory, applies the real migrations and the real private-web grants, and
@@ -65,7 +65,9 @@ const BIN = CANDIDATE_BINS.find(dir => existsSync(join(dir, "initdb")) && exists
   ?? "/usr/lib/postgresql/17/bin";
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
-const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 56160);
+// A fixed port inside Linux's ephemeral range can be held by an earlier test's
+// connection. Honor the lane override; otherwise ask the OS for a free port.
+let PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 0);
 const exec = promisify(execFile);
 const native = (name: string, args: string[]) => exec(join(BIN, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", LANG: "C", TMPDIR: run, NODE_ENV: "test" }, timeout: 120000, maxBuffer: 1 << 26 });
@@ -283,19 +285,25 @@ before(async () => {
   assert.match((await native("postgres", ["--version"])).stdout, /PostgreSQL\) 17\./);
   await native("initdb", ["-D", data, "-U", "pa_admin", "--auth-local=trust", "--auth-host=trust", "--no-locale", "--encoding=UTF8"]);
   started = true;
-  try {
-    await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
-      `-p ${PORT} -k '${run}' -c listen_addresses=127.0.0.1 -c shared_buffers=32MB -c max_connections=60`,
-      "start"]);
-  } catch (error) {
-    // pg_ctl only says "could not start server"; the cause is in server.log.
-    const failure = error as Error & { serverLog?: string };
-    const log = await readFile(join(run, "server.log"), "utf8").catch(() => "server.log missing");
-    const tail = log.trimEnd().split("\n").slice(-80).join("\n");
-    failure.serverLog = tail;
-    failure.message += `\n--- server.log (last 80 lines) ---\n${tail}\nport conflict: ${isPortConflict(failure, tail) ? "yes" : "no"}`;
-    throw failure;
+  for (let attempt = 0; ; attempt++) {
+    if (process.env.CONTROL_ROOM_PG_TEST_PORT_BASE === undefined) PORT = await findFreePort();
+    try {
+      await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
+        `-p ${PORT} -k '${run}' -c listen_addresses=127.0.0.1 -c shared_buffers=32MB -c max_connections=60`,
+        "start"]);
+      break;
+    } catch (error) {
+      // pg_ctl only says "could not start server"; the cause is in server.log.
+      const failure = error as Error & { serverLog?: string };
+      const log = await readFile(join(run, "server.log"), "utf8").catch(() => "server.log missing");
+      const tail = log.trimEnd().split("\n").slice(-80).join("\n");
+      if (attempt < 4 && process.env.CONTROL_ROOM_PG_TEST_PORT_BASE === undefined && isPortConflict(failure, tail)) continue;
+      failure.serverLog = tail;
+      failure.message += `\n--- server.log (last 80 lines) ---\n${tail}\nport conflict: ${isPortConflict(failure, tail) ? "yes" : "no"}`;
+      throw failure;
+    }
   }
+  for (const config of [PG, ADMIN, WRITER, WEB]) Object.assign(config, { port: PORT });
   const bootstrap = new Client({ host: "127.0.0.1", port: PORT, database: "postgres", user: "pa_admin" });
   await bootstrap.connect();
   try { await bootstrap.query(`CREATE DATABASE ${PG.database}`); } finally { await bootstrap.end(); }

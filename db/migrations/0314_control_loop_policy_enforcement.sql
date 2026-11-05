@@ -4,7 +4,7 @@ SET LOCAL statement_timeout = '5s';
 ALTER TABLE control_loop_policy_layers ADD COLUMN locked_paths jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE control_loop_policy_layers ADD CONSTRAINT control_loop_policy_locked_paths_check
   CHECK (CASE WHEN jsonb_typeof(locked_paths)='array' THEN jsonb_array_length(locked_paths)<=100 ELSE false END
-    AND (layer='project' OR locked_paths='[]'::jsonb));
+    AND (layer='project' OR locked_paths='[]'::jsonb)) NOT VALID;
 CREATE FUNCTION guard_control_loop_policy_locked_paths() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE path text;
 BEGIN
@@ -81,7 +81,7 @@ CREATE TRIGGER control_loop_policy_waivers_no_truncate BEFORE TRUNCATE ON contro
   FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
 ALTER TABLE control_loop_policy_input_sources DROP CONSTRAINT control_loop_policy_input_sources_waiver_id_check;
 ALTER TABLE control_loop_policy_input_sources ADD CONSTRAINT control_loop_policy_sources_waiver_fk
-  FOREIGN KEY (tenant_id,waiver_id) REFERENCES control_loop_policy_waivers(tenant_id,id) ON DELETE RESTRICT;
+  FOREIGN KEY (tenant_id,waiver_id) REFERENCES control_loop_policy_waivers(tenant_id,id) ON DELETE RESTRICT NOT VALID;
 CREATE FUNCTION guard_control_loop_policy_source_waiver() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NEW.waiver_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM control_loop_policy_waivers w
@@ -137,4 +137,4 @@ CHECK ((
         AND btrim(binding->'body'->>'text')<>''
         AND ((binding->'body') - ARRAY['expectedVersion','expectedRevision','questionId','inputVersion','questionReportSha256','text'])='{}'::jsonb
     END
-  ) IS TRUE);
+  ) IS TRUE) NOT VALID;

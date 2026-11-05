@@ -1,3 +1,4 @@
+import { pgSocketOptionV1, pgCtlInvocationV1 } from "../src/pg-runtime/v1/pg-path-quoting.mjs";
 // Explicit disposable local fixture; never attaches to an existing database.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -34,8 +35,11 @@ const exec = promisify(execFile);
 const run = await mkdtemp(join(tmpdir(), "cr-driver-pg17-"));
 const data = join(run, "data"), socket = join(run, "socket");
 await mkdir(socket, { mode: 0o700 });
-const native = (name: string, args: string[]) => exec(join(bin, name), args,
-  { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" }, timeout: 20000 });
+const native = (name: string, args: string[]) => {
+  const environment = { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" as const };
+  const invocation = name === "pg_ctl" ? pgCtlInvocationV1(args, environment, join(bin, "postgres")) : { args, environment };
+  return exec(join(bin, name), invocation.args, { env: invocation.environment, timeout: 20000 });
+};
 // The shared teardown, created BEFORE initdb, so a fixture that is signalled,
 // exits early, or fails mid-start never leaves a postmaster holding a 56-byte
 // SysV shared-memory segment. This machine has 32 of those in total. The old
@@ -52,7 +56,7 @@ try {
   await native("initdb", ["-D", data, "-U", "fixture_user", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
   attempted = true;
   await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "10", "-o",
-    `-k ${socket} -p 65435 -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=12 -c shared_preload_libraries=''`, "start"]);
+    `${pgSocketOptionV1(socket)} -p 65435 -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=12 -c shared_preload_libraries=''`, "start"]);
   // Retained while the cluster is up, so a teardown reached from a signal has a
   // pid even when the rest of the fixture is about to throw.
   await teardown.capturePostmasterPid();

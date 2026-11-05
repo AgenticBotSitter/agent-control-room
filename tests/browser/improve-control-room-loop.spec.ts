@@ -110,7 +110,7 @@ for (const width of [360, 1280]) test(`B2a browser closes and reopens the saved 
     f.edit({ state: "waiting", revision: 8 }); await page.getByRole("button", { name: "Refresh status" }).click();
     await expect(page.getByText("Waiting for your decision", { exact: true })).toBeVisible();
     f.edit({ state: "refused", revision: 9, progress: { step: "build", completed: 1, attention: "blocked" } });
-    await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("The saved run is blocked.", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("BLOCKED: The saved run is blocked.", { exact: true })).toBeVisible();
     await context!.close(); context = undefined;
     // Progress changes independently while no browser is open. No execution driver is claimed.
     f.edit({ state: "running", revision: 10, progress: { step: "final", completed: 2, attention: "none" } });

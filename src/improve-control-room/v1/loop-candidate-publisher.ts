@@ -73,12 +73,17 @@ export interface LoopCandidatePublicationPortV1 {
   prepareLoopCandidateCompletion(runLinkId: string): Promise<void>;
   recordLoopCandidate(evidence: LoopCandidateEvidenceV1): Promise<LoopCandidateCompletionReceiptV1>;
 }
+export type LoopCandidatePublicationStageV1 = "prepare" | "verify" | "record";
 export class LoopCandidatePublisherV1 {
   constructor(private readonly port: LoopCandidatePublicationPortV1, private readonly dependencies: LoopCandidateDependenciesV1) {}
-  async publishCompletion(input: Readonly<{ runLinkId: string; completionDigest: string }>): Promise<LoopCandidateCompletionReceiptV1> {
+  async publishCompletion(input: Readonly<{ runLinkId: string; completionDigest: string }>,
+    onStage?: (stage: LoopCandidatePublicationStageV1) => void): Promise<LoopCandidateCompletionReceiptV1> {
     if (!loopCandidateDigestV1.safeParse(input.completionDigest).success) throw new Error("loop_candidate_unavailable");
+    onStage?.("prepare");
     await this.port.prepareLoopCandidateCompletion(input.runLinkId);
+    onStage?.("verify");
     const evidence = await verifyLoopCandidateCompletionV1(this.dependencies, input.runLinkId, input.completionDigest);
+    onStage?.("record");
     return this.port.recordLoopCandidate(evidence);
   }
 }

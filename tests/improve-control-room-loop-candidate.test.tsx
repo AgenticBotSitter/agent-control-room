@@ -371,7 +371,10 @@ if(process.env.CONTROL_ROOM_B4_REQUIRE_A2 === "1")test("B4 reviewed A2 completio
   assert.ok(evidence.checks.some(c=>c.required&&c.completed!>0&&c.status==="PASS"&&c.exitCode===0&&c.failed===0&&c.skipped===0));
   assert.ok(evidence.reviews.some(r=>r.current&&r.role==="final"));
   for(const review of evidence.reviews.filter(r=>r.current)){
-    assert.equal(review.verdict,"CLEAN");assert.equal(review.identityVerified,true);assert.ok(review.observedModel);assert.ok(review.family);
+    assert.equal(review.verdict,"CLEAN");assert.ok(review.family);
+    if(review.identityBasis==="selected")assert.ok(review.selectedModel);
+    else {assert.equal(review.identityVerified,true);assert.ok(review.observedModel);}
+    if(review.identityVerified)assert.ok(review.observedModel);
     assert.equal(review.candidateRevision,evidence.binding.candidateRevision);assert.equal(review.inputVersion,g.target.inputVersion);
   }
   assert.equal(evidence.findings.some(f=>f.disposition==="OPEN"&&f.severity!=="LOW"),false);
@@ -585,6 +588,32 @@ test("B4 card shows unavailable for missing final-report sections",async()=>{
     for(const bad of [{summary:""},{changedAreas:[]},{databaseChanges:{kind:"unknown"}},{rounds:{...c.evidence.rounds,repairs:-1}},
       {assumptions:[{...c.evidence.assumptions![0]!,evidenceDigest:null}]},{validations:[{...c.evidence.validations![0]!,evidenceDigest:null}]}])
       assert.equal(loopCandidateCardSchemaV1.safeParse({...c,evidence:{...c.evidence,...bad}}).success,false,`B4 present values keep their bounds: ${Object.keys(bad)[0]}`);
+  }finally{await f.close();}
+});
+
+// I-1 rehearsal: the real A2 completion of a final report without these sections carries
+// null for each (and cr always reports repairs=null). The wire accepted that, but the SQL
+// guard ran jsonb_array_elements(null) and failed with 22023 before anything was stored.
+test("B4 a final report missing optional sections records and replays its finish card",async()=>{
+  const f=await syntheticFixture();try{
+    f.edit(e=>{e.summary=null;e.changedAreas=null;e.databaseChanges=null;e.assumptions=null;e.validations=null;e.rounds.repairs=null;});
+    const receipt=await f.publish();assert.equal(receipt.state,"recorded","B4 null sections are stored, not refused by the SQL guard");
+    assert.equal((await f.publish()).state,"replayed");
+    const card=(await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate!;
+    assert.equal(card.candidateId,receipt.candidate.candidateId);
+    for(const key of ["summary","changedAreas","databaseChanges","assumptions","validations"] as const)assert.equal(card.evidence[key],null,`B4 ${key} stays unavailable`);
+    assert.equal(card.evidence.rounds.repairs,null);
+    // Present values keep their SQL bounds: a non-null section of the wrong shape is still refused.
+    const row=(await f.client.query<Record<string,unknown>>("SELECT * FROM control_loop_update_candidates WHERE id=$1",[receipt.candidate.candidateId])).rows[0]!;
+    const insert=(path:string,value:string)=>f.client.query(`INSERT INTO control_loop_update_candidates(tenant_id,id,project_id,request_id,owner_identity_id,run_link_id,
+      local_version,a2_input_version,candidate_revision,completion_digest,retention_digest,payload,created_at,record_digest,auth_tag)
+      SELECT tenant_id,$2,project_id,request_id,owner_identity_id,run_link_id,local_version,a2_input_version,candidate_revision,completion_digest,
+      retention_digest,jsonb_set(payload,$3::text[],$4::jsonb),created_at,record_digest,auth_tag FROM control_loop_update_candidates WHERE id=$1`,
+      [row.id,`loop-candidate:sql-bound-${path.replace(/[^a-z]/giu,"")}`,`{${path}}`,value]);
+    for(const [path,value] of [["assumptions",'"none"'],["validations","{}"],["changedAreas",'"x"'],["changedAreas","[]"],["summary","1"],
+      ["summary",'""'],["databaseChanges",'"none"'],["rounds,repairs",'"1"'],["assumptions",'[{"id":"a:1","text":"x","status":"validated","evidenceDigest":null}]']] as const)
+      await assert.rejects(insert(path,value),(e:{code?:string;sqlState?:string})=>(e.code??e.sqlState)==="23514",`B4 SQL refuses ${path}=${value}`);
+    assert.equal((await f.client.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,1);
   }finally{await f.close();}
 });
 
@@ -996,14 +1025,16 @@ test("B4 decision URL and body candidate IDs must agree",async()=>{
 test("B4 CI mutation partitions retain five-minute step bounds",async()=>{
  const {readFile}=await import("node:fs/promises");
  const workflow=await readFile(".github/workflows/ci.yml","utf8"),manifest=JSON.parse(await readFile("package.json","utf8"));
- const job=workflow.split("  mutation-checks:")[1]!.split("\n  pr-claims:")[0]!;
- assert.match(job,/timeout-minutes: 45/u);
- for(const part of ["source","ui","sql-consumption","sql-decision-immutability","sql-binding","sql-checks","sql-authority","sql-candidate-immutability","sql-grants"]){
-  const script=`test:improve-control-room-loop-candidate-mutations:${part}`;
-  assert.equal(typeof manifest.scripts[script],"string","B4 bounded CI partitions each invoke an executable lane");
-  assert.match(manifest.scripts[script],/--test-name-pattern=/u);
-  const step=job.split(/      - /u).find(s=>s.includes(`run: pnpm run ${script}\n`));
-  assert.ok(step,`B4 CI reaches mutation partition ${part}`);assert.match(step,/timeout-minutes: 5/u);assert.doesNotMatch(step,/\n        if:/u);
+ const {assertMutationLaneCoverage,mutationLaneShape}=await import("../scripts/check-test-lane-coverage.mjs");
+ assertMutationLaneCoverage(manifest.scripts,workflow);
+ const lanes=mutationLaneShape["mutation-checks-candidate"].lanes as [script:string,bound:number][];
+ for(const [script] of lanes.filter(([name])=>name.includes("candidate-mutations:"))){
+  const part=script.split(":").at(-1);
+  const removed=workflow.replace(`        run: pnpm run ${script}\n`,"");
+  assert.notEqual(removed,workflow);
+  assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,removed),{name:"AssertionError"},`B4 missing partition ${part} must fail coverage`);
+  const duplicated=workflow.replace(`        run: pnpm run ${script}\n`,`        run: pnpm run ${script}\n      - run: pnpm run ${script}\n        timeout-minutes: 5\n`);
+  assert.throws(()=>assertMutationLaneCoverage(manifest.scripts,duplicated),{name:"AssertionError"},`B4 duplicated partition ${part} must fail coverage`);
  }
 });
 
@@ -1029,4 +1060,180 @@ test("B4 finish card uses human durations and plain decision labels",async()=>{
    assert.ok(html.includes(`Finished candidate — ${label}`));
   }
  }finally{await f.close();}
+});
+
+import { loopCandidateEvidenceSchemaV1 } from "../src/improve-control-room/v1/loop-candidate-wire";
+import { verifyLoopCandidateCompletionV1 } from "../src/improve-control-room/v1/loop-candidate-publisher";
+
+// SYNTHETIC wire and publisher boundary fixture; no launcher observation is claimed.
+const digest = `sha256:${"a".repeat(64)}`, base = "a".repeat(40), head = "b".repeat(40);
+const startedAt = "2026-01-01T00:00:00.000Z", endedAt = "2026-01-01T00:00:01.000Z";
+function evidence() {
+  return {
+    schemaVersion: 1,
+    binding: { projectId: "project:wire", requestId: "request:wire", runLinkId: "run:wire", localVersion: 1,
+      adapterId: "adapter:wire", loopRunId: "loop:wire", toolingRevision: digest, a2SchemaVersion: 1,
+      a2InputVersion: "input:1", engineRevision: 1, requestSha256: "a".repeat(64), settingsSha256: "a".repeat(64),
+      baseRevision: base, candidateRevision: head, inputsDigest: digest, recipeDigest: digest, environmentDigest: digest },
+    summary: "SYNTHETIC completion", changedAreas: ["Wire admission"], databaseChanges: { kind: "none" },
+    checks: [{ id: "check:wire", required: true, commandLabel: "SYNTHETIC check", receiptDigest: digest, outputDigest: digest,
+      candidateRevision: head, status: "PASS", exitCode: 0, completed: 1, passed: 1, failed: 0, skipped: 0,
+      durationMs: 1000, startedAt, endedAt }],
+    reviews: [{ current: true, stepId: "review:wire", role: "final", attempt: 1, requestedModel: "SYNTHETIC requested",
+      selectedModel: "SYNTHETIC selected", identityBasis: "selected", observedModel: null, identityVerified: false,
+      family: "synthetic-family", verdict: "CLEAN", candidateRevision: head, inputVersion: "input:1",
+      reportDigest: digest, sidecarDigest: digest, startedAt, endedAt }],
+    findings: [], rounds: { attempts: 1, reviewRejections: 0, repairs: 0, redesigns: 0 },
+    timing: { startedAt, finishedAt: endedAt, durationMs: 1000 }, assumptions: null, validations: null,
+    overrides: { allowSameFamilyReview: false, allowStandardFinal: false, waivedConflicts: [], fallback: null },
+    completionDigest: digest, retentionDigest: digest,
+  };
+}
+
+test("B5 selected identity admits a current final without observed identity", () => {
+  const parsed = loopCandidateEvidenceSchemaV1.parse(evidence());
+  assert.equal(parsed.reviews[0]!.selectedModel, "SYNTHETIC selected");
+  assert.equal(parsed.reviews[0]!.identityBasis, "selected");
+  assert.equal(parsed.reviews[0]!.identityVerified, false);
+  assert.equal(parsed.reviews[0]!.observedModel, null);
+});
+
+test("B5 selected identity preserves readiness and strict bounded review guards", () => {
+  const variants: [string, (e: any) => void][] = [
+    ["missing selection", e => { delete e.reviews[0].selectedModel; }],
+    ["empty selection", e => { e.reviews[0].selectedModel = ""; }],
+    ["blank selection", e => { e.reviews[0].selectedModel = "  "; }],
+    ["oversized selection", e => { e.reviews[0].selectedModel = "x".repeat(241); }],
+    ["missing basis", e => { delete e.reviews[0].identityBasis; }],
+    ["unknown basis", e => { e.reviews[0].identityBasis = "invented"; }],
+    ["empty family", e => { e.reviews[0].family = ""; }],
+    ["blank family", e => { e.reviews[0].family = "  "; }],
+    ["null family", e => { e.reviews[0].family = null; }],
+    ["false observation claim", e => { e.reviews[0].identityVerified = true; }],
+    ["observed basis without verification", e => { e.reviews[0].identityBasis = "observed"; }],
+    ["unknown review field", e => { e.reviews[0].extra = true; }],
+    ["missing final", e => { e.reviews[0].role = "code"; }],
+    ["stale head", e => { e.reviews[0].candidateRevision = base; }],
+    ["stale input", e => { e.reviews[0].inputVersion = "input:2"; }],
+    ["not clean", e => { e.reviews[0].verdict = "NEEDS-FIX"; }],
+    ["missing report", e => { delete e.reviews[0].reportDigest; }],
+    ["missing sidecar", e => { delete e.reviews[0].sidecarDigest; }],
+    ["backwards time", e => { e.reviews[0].endedAt = "2025-01-01T00:00:00.000Z"; }],
+    ["zero checks", e => { e.checks[0].completed = 0; e.checks[0].passed = 0; }],
+    ["blocking finding", e => { e.findings.push({ origin: "review:wire", id: "finding:wire", severity: "HIGH",
+      disposition: "OPEN", summary: "SYNTHETIC finding", evidenceDigest: digest }); }],
+    ["missing retention", e => { delete e.retentionDigest; }],
+  ];
+  for (const [name, edit] of variants) {
+    const value = evidence(); edit(value);
+    assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, false, name);
+  }
+});
+
+test("B5 selected and legacy observed identity retain observation semantics", () => {
+  const value: any = evidence();
+  value.reviews[0].identityVerified = true;
+  value.reviews[0].observedModel = "SYNTHETIC observation";
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, true);
+  value.reviews[0].identityBasis = "observed";
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, true);
+  delete value.reviews[0].identityBasis; delete value.reviews[0].selectedModel;
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, true);
+  value.reviews[0].identityVerified = false;
+  assert.equal(loopCandidateEvidenceSchemaV1.safeParse(value).success, false);
+});
+
+function dependencies(read: (readNumber: number) => unknown) {
+  let reads = 0;
+  return { source: { toolingRevision: digest, schemaDigest: digest,
+    readVerifiedCompletion: async () => read(++reads) as ReturnType<typeof loopCandidateEvidenceSchemaV1.parse> },
+    repository: { observe: async () => ({ baseRevision: base, candidateRevision: head,
+      changedPaths: ["src/synthetic.ts"], addedPaths: [], commitSubjects: ["SYNTHETIC completion"] }) }, reads: () => reads };
+}
+
+test("B5 publisher accepts selected identity through both stable schema reads", async () => {
+  const deps = dependencies(() => evidence());
+  const result = await verifyLoopCandidateCompletionV1(deps, "run:wire", digest);
+  assert.equal(deps.reads(), 2);
+  assert.equal(result.reviews[0]!.identityVerified, false);
+  assert.equal(result.reviews[0]!.selectedModel, "SYNTHETIC selected");
+});
+
+test("B5 publisher rejects invalid selection on either read and changed custody", async () => {
+  for (const invalidRead of [1, 2]) {
+    const deps = dependencies(n => {
+      const value = evidence(); if (n === invalidRead) value.reviews[0]!.selectedModel = "";
+      return value;
+    });
+    await assert.rejects(verifyLoopCandidateCompletionV1(deps, "run:wire", digest));
+    assert.equal(deps.reads(), invalidRead);
+  }
+  const deps = dependencies(n => {
+    const value = evidence(); if (n === 2) value.reviews[0]!.selectedModel = "SYNTHETIC changed selection";
+    return value;
+  });
+  await assert.rejects(verifyLoopCandidateCompletionV1(deps, "run:wire", digest), /loop_candidate_unavailable/);
+  assert.equal(deps.reads(), 2);
+});
+
+// Bypass the service wire parser: SQL must enforce these bounds independently.
+test("B5 SQL review identity rejects unknown keys and invalid optional values",async()=>{
+  const f=await syntheticFixture();
+  try {
+    await f.desk.prepareLoopCandidateCompletion(f.runLinkId);
+    const original=f.evidence();
+    const {loopCandidateEvidenceSchemaV1}=await import("../src/improve-control-room/v1/loop-candidate-wire");
+    const invalid:Record<string,unknown>[]=[
+      {selectedModel:"model",identityBasis:"selected",extra:true}, {selectedModel:null}, {selectedModel:42}, {selectedModel:true},
+      {selectedModel:[]}, {selectedModel:{}}, {selectedModel:""}, {selectedModel:" \t\n"},
+      {selectedModel:"\u00a0\ufeff"}, {selectedModel:"x".repeat(241)}, {selectedModel:"😀".repeat(121)},
+      {selectedModel:"/"+"Users/fixture/model"}, {selectedModel:"/"+"home/fixture/model"},
+      {selectedModel:"/"+"Volumes/fixture/model"}, {selectedModel:"C:"+String.fromCharCode(92)+"model"},
+      {identityBasis:null}, {identityBasis:42}, {identityBasis:true}, {identityBasis:[]},
+      {identityBasis:{}}, {identityBasis:""}, {identityBasis:"invented"}, {identityBasis:"SELECTED"},
+    ];
+    for(const fields of invalid){
+      f.edit(e=>{e.reviews=structuredClone(original.reviews);Object.assign(e.reviews[0]!,fields);});
+      assert.equal(loopCandidateEvidenceSchemaV1.safeParse(f.evidence()).success,false,JSON.stringify(fields));
+      await assert.rejects(rawCandidateInsert(f),{code:"23514",message:"loop candidate reviews shape rejected"},JSON.stringify(fields));
+    }
+    for(const fields of [{},{selectedModel:"x".repeat(240)}, {selectedModel:"😀".repeat(120)},
+      {selectedModel:"  model  "}, {selectedModel:"model",identityBasis:"selected"}, {identityBasis:"observed"}]){
+      f.edit(e=>{e.reviews=structuredClone(original.reviews);Object.assign(e.reviews[0]!,fields);});
+      assert.equal(loopCandidateEvidenceSchemaV1.safeParse(f.evidence()).success,true,JSON.stringify(fields));
+      await f.db.exec("BEGIN");
+      try{await rawCandidateInsert(f);}finally{await f.db.exec("ROLLBACK");}
+    }
+    assert.equal((await f.db.query<{n:number}>("SELECT count(*)::int n FROM control_loop_update_candidates")).rows[0]!.n,0);
+    console.log("RESULT: PASS SQL independently rejects 23 malformed identity/extra-key cases and accepts six valid optional identity shapes");
+  }finally{await f.close();}
+});
+
+test("B5 review identity migration down restores 0305 and re-up preserves retained rows",async()=>{
+  const f=await syntheticFixture();
+  try{
+    const {readFile}=await import("node:fs/promises");
+    const migrate=async(direction:"migrations"|"down")=>{
+      await f.db.exec("BEGIN");
+      try{await f.db.exec("SET LOCAL ROLE control_room_schema_owner");
+        await f.db.exec(await readFile(`db/${direction}/0307_control_loop_candidate_review_identity.sql`,"utf8"));
+        await f.db.exec("COMMIT");
+      }catch(error){await f.db.exec("ROLLBACK");throw error;}
+    };
+    f.edit(e=>{for(const review of e.reviews)Object.assign(review,{selectedModel:"SYNTHETIC selected",identityBasis:"selected"});});
+    const receipt=await f.publish();assert.equal(receipt.state,"recorded");
+    const before=(await f.client.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows;
+    await migrate("down");
+    const restored=(await f.db.query<{body:string}>("SELECT prosrc body FROM pg_proc WHERE proname='guard_control_loop_update_candidate_insert'")).rows[0]!.body;
+    const original=await readFile("db/migrations/0305_control_loop_candidate_unavailable_sections.sql","utf8");
+    assert.equal(restored,original.split("AS $$")[1]!.split("$$;")[0]);
+    await assert.rejects(rawCandidateInsert(f),{code:"23514",message:"loop candidate reviews shape rejected"});
+    assert.deepEqual((await f.client.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows,before);
+    // Existing records can still be read while the writer is rolled back.
+    assert.deepEqual((await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId)).candidate?.evidence.reviews,f.evidence().reviews);
+    await migrate("migrations");
+    assert.equal((await f.publish()).state,"replayed");
+    assert.deepEqual((await f.client.query("SELECT payload,record_digest,auth_tag FROM control_loop_update_candidates")).rows,before);
+    console.log("RESULT: PASS 0307 down restores exact 0305 body, rejects new identity writes and preserves retained rows; re-up replays publication");
+  }finally{await f.close();}
 });

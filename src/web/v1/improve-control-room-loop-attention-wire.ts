@@ -80,7 +80,7 @@ const legacyLoopAttentionItemSchemaV1 = z.object({ projectId: id, requestId: id,
     item.kind === item.identity.kind && (item.runLinkId !== null && item.engineRevision !== null
       || item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE"));
 export const loopFinalizationReasonSchemaV1 = z.enum(["FINISHED","FAILED","STOPPED","LAUNCH_UNCERTAIN","INPUT_CHANGED","QUESTION_LIMIT",
-  "LOGIN_REQUIRED","PROVIDER_UNAVAILABLE","TOOL_MISSING","DEADLINE_EXCEEDED","RETENTION_FAILED","TERMINATION_UNCERTAIN","CLEANUP_REFUSED","CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE"]);
+  "LOGIN_REQUIRED","PROVIDER_UNAVAILABLE","TOOL_MISSING","DEADLINE_EXCEEDED","RETENTION_FAILED","TERMINATION_UNCERTAIN","CLEANUP_REFUSED","CLEANUP_UNCERTAIN","PUBLICATION_UNAVAILABLE","UNAVAILABLE","PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED","PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"]);
 const productDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const lifecycleIdentity = z.discriminatedUnion("kind", [
   z.object({kind:z.literal("finish"),completionDigest:productDigest}).strict(),
@@ -106,7 +106,7 @@ export const loopAttentionKey = (item: LoopAttentionItemV1) => "reasonCode" in i
 export function loopAttentionComplete(source?: z.infer<typeof loopAttentionSourceSchemaV1>) {
   return !source || source.state === "available" && !source.truncated
     && !source.items.some(item => item.runLinkId !== null && item.identity.kind === "blocked" && item.identity.code === "UNAVAILABLE"
-      || "reasonCode" in item && ["UNAVAILABLE","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE"].includes(item.reasonCode));
+      || "reasonCode" in item && ["UNAVAILABLE","RETENTION_FAILED","TERMINATION_UNCERTAIN","PUBLICATION_UNAVAILABLE","PUBLICATION_PREPARE_FAILED","PUBLICATION_VERIFY_FAILED","PUBLICATION_RECORD_FAILED","PUBLICATION_VERIFY_PUBLICATION_FAILED","PUBLICATION_PUBLISHED_APPEND_FAILED","PUBLICATION_ANNOUNCED_APPEND_FAILED"].includes(item.reasonCode));
 }
 export function loopAttentionUnknown(source?: z.infer<typeof loopAttentionSourceSchemaV1>) {
   // A fresh per-root refusal is a counted unavailable item, so it makes the

@@ -327,17 +327,25 @@ import { readFile } from 'node:fs/promises';
 import { readPrivateWebSchemaDigest } from '../src/web/v1/private-database-preflight';
 test('P72 empty enforcement down re-up restores exact shape and retained unlocked layers refuse',async t=>{
   const f=await fixture(t),before=await readPrivateWebSchemaDigest(f.client);
-  await f.db.exec(await readFile('db/down/0311_control_loop_paid_admission.sql','utf8'));
-  await f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
-  assert.equal(await readPrivateWebSchemaDigest(f.client),'fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f');
+  await f.db.exec(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8'));
+  assert.equal(await readPrivateWebSchemaDigest(f.client),'388364abf81943ff1a8aca8eb7ed153b73239c0e2a935f896c2d51635ba29422');
   await f.db.exec('BEGIN');
-  try { await f.db.exec(await readFile('db/migrations/0310_control_loop_policy_enforcement.sql','utf8'));
-    await f.db.exec(await readFile('db/migrations/0311_control_loop_paid_admission.sql','utf8'));await f.db.exec('COMMIT'); }
+  const validation = async () => (await f.db.query<{conname:string;convalidated:boolean}>(`SELECT conname,convalidated FROM pg_constraint
+    WHERE conname IN ('control_loop_policy_locked_paths_check','control_loop_policy_sources_waiver_fk','control_loop_improvement_commands_check1')
+    ORDER BY conname`)).rows;
+  try { await f.db.exec(await readFile('db/migrations/0314_control_loop_policy_enforcement.sql','utf8'));
+    await f.db.exec('COMMIT');
+    assert.deepEqual(await validation(), ['control_loop_improvement_commands_check1','control_loop_policy_locked_paths_check','control_loop_policy_sources_waiver_fk']
+      .map(conname=>({conname,convalidated:false})), '0314 enforces new writes without validating retained rows in its DDL transaction');
+    await f.db.exec('BEGIN');
+    await f.db.exec(await readFile('db/migrations/0315_control_loop_paid_admission.sql','utf8'));await f.db.exec('COMMIT');
+    assert.ok((await validation()).every(row=>row.convalidated), '0315 validates all retained rows in the following transaction'); }
   catch(error) { await f.db.exec('ROLLBACK');throw error; }
   assert.equal(await readPrivateWebSchemaDigest(f.client),before,'no physical column-number drift after empty down re-up');
   await f.service.put(f.identity,f.project.projectId,'project',{expectedVersion:0,settings:'{}',lockedPaths:[]},key());
   const rows=(await f.db.query('SELECT * FROM control_loop_policy_layers')).rows;
-  await assert.rejects(f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8')),/loop policy enforcement retained/);
+  await assert.rejects(f.db.exec(await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8')),/loop policy enforcement retained/);
   await f.db.exec('ROLLBACK');
   assert.deepEqual((await f.db.query('SELECT * FROM control_loop_policy_layers')).rows,rows);
   assert.equal(await readPrivateWebSchemaDigest(f.client),before,'refused down changes no schema or retained layer');

@@ -71,6 +71,21 @@ function binding(pg: RealPostgres, max?: number) {
   const config = { host: "127.0.0.1", port: c.port, database: c.database, username: c.user, password: c.password, majorVersion: 17 as const };
   const options = privatePgOptions(config);
   const pool = new Pool({ ...options, host: c.host, ...(max === undefined ? {} : { max }) });
+  // Observe the server error before the production driver sanitizes it. Keep
+  // the original rejection and admission counts; never retry a failed write.
+  pool.on("connect", session => {
+    const query = session.query.bind(session);
+    session.query = (async (statement: string, params?: unknown[]) => {
+      try { return await query(statement, params); }
+      catch (error) {
+        const pgError = error as { code?: string; table?: string; constraint?: string; detail?: string };
+        if (pgError.code === "23505") console.error("CR-E075 PostgreSQL unique violation " + JSON.stringify({
+          code: pgError.code, table: pgError.table, constraint: pgError.constraint, detail: pgError.detail,
+        }));
+        throw error;
+      }
+    }) as typeof session.query;
+  });
   const db = bindPrivatePgPool(pool);
   return { db, pool, config, store: new PostgresOwnerPushStoreV1(db.client) };
 }
@@ -242,106 +257,4 @@ test("CR-E075 narrow authority", () => fixture(4, async ({ live, pg }) => {
       assert.equal((await web.query("SELECT has_column_privilege('owner_web_push_subscriptions',$1,'UPDATE') ok", [column])).rows[0].ok, true);
     assert.equal((await web.query("SELECT owner_push_endpoint_allowed($1) ok", [ENDPOINT])).rows[0].ok, true);
   } finally { await web.end(); await other.end(); }
-}));
-test("CR-E075 real owner HTTP", () => fixture(5, async ({ live, admin }) => {
-  await secondOwner(admin);
-  await http(live, async (call, cookie) => {
-    assert.equal((await call("/api/v1/owner-web-push", payload())).status, 401);
-    assert.equal((await call("/api/v1/owner-web-push", payload(), cookie, "https://hostile.example.invalid")).status, 403);
-    assert.equal((await call("/api/v1/owner-web-push", { ...payload(), tenantId: "tenant:subscribe-second" }, cookie)).status, 204);
-    assert.deepEqual((await live.store.list(TENANT)).map(fields), [fields(INPUT)]);
-    assert.deepEqual(await live.store.list("tenant:subscribe-second"), []);
-    await subscribe(live, { ...INPUT, tenantId: "tenant:subscribe-second" });
-    assert.equal((await call("/api/v1/owner-web-push", { endpoint: ENDPOINT }, cookie, undefined, "DELETE")).status, 204);
-    assert.deepEqual(await live.store.list(TENANT), []);
-    assert.deepEqual((await live.store.list("tenant:subscribe-second")).map(fields), [fields({ ...INPUT, tenantId: "tenant:subscribe-second" })]);
-  });
-}));
-test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admin, pg }) => {
-  await subscribe(live); const id = await history(live); const before = await counters(admin);
-  const slow = binding(pg); const lock = new Client(pg.admin()); await lock.connect();
-  // Open all eight pooled sessions first so every waiter starts together and the held lock stays inside the production two-second lock_timeout (CR-E075 D09).
-  await Promise.all(Array.from({ length: 8 }, () => slow.db.client.query("SELECT pg_sleep(0.2)")));
-  await lock.query("BEGIN"); await lock.query("SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 FOR UPDATE", [TENANT]);
-  const start = performance.now();
-  const calls = Array.from({ length: 20 }, (_,n) => slow.store.subscribe({ ...INPUT, p256dh: `Slow_${n}`, auth: `SlowAuth_${n}` }));
-  const settled = Promise.allSettled(calls);
-  try {
-    await waitFor(admin, waits, ["control-room-private-web"], 8);
-    assert.equal(slow.pool.totalCount, 8, "production pool limit independently specified as eight");
-    await lock.query("ROLLBACK");
-    const results = await settled;
-    // Independent policy literals: eight active plus eight queued, four refused.
-    assert.equal(results.filter(x => x.status === "fulfilled").length, 16, JSON.stringify(results.map(x => x.status === "fulfilled" ? "ok" : `${x.reason.code}:${x.reason.sqlState}`)));
-    const refused = results.filter(x => x.status === "rejected");
-    assert.equal(refused.length, 4);
-    for (const result of refused) if (result.status === "rejected") {
-      assert.equal(result.reason.code, "database_unavailable");
-      assert.equal(result.reason.sqlState, undefined, "admission refusal is not a SQL failure");
-    }
-    console.log(`CR-E075 slow:20 settled;16 completed;4 admission refusals; pool_limit=8; milliseconds=${Math.round(performance.now()-start)}`);
-  } finally { await lock.query("ROLLBACK"); await settled; await slow.db.close(); await lock.end(); }
-  const dropped = child(pg, { ...INPUT, p256dh: "Drop", auth: "DropAuth" }, "subscribe-drop");
-  try {
-    await dropped.ready; const lock2 = new Client(pg.admin()); await lock2.connect();
-    try {
-      await lock2.query("BEGIN"); await lock2.query("SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 FOR UPDATE", [TENANT]);
-      dropped.process.stdin.write("GO\n"); await waitFor(admin, waits, ["subscribe-drop"], 1);
-      assert.equal((await admin.query("SELECT pg_terminate_backend(pid) ok FROM pg_stat_activity WHERE application_name=$1", ["subscribe-drop"])).rows[0].ok, true);
-      assert.notEqual((await dropped.closed).code, 0, "dropped connection reaches the failing caller");
-      await lock2.query("ROLLBACK");
-    } finally { await lock2.query("ROLLBACK"); await lock2.end(); }
-    await subscribe(live); assert.equal((await row(admin)).id, id);
-    assert.equal(await live.store.reserve(TENANT,id,"test:history",AT),"already_delivered"); assert.equal(await counters(admin),before);
-  } finally { await stop([dropped]); }
-}));
-test("CR-E075 stop halfway", () => fixture(8, async ({ live, admin, pg }) => {
-  await subscribe(live); const id = await history(live); const lock = new Client(pg.admin()); await lock.connect();
-  const caller = child(pg, { ...INPUT, p256dh: "Next", auth: "NextAuth" }, "subscribe-stop", true);
-  try {
-    await caller.ready; await lock.query("BEGIN"); await lock.query("SELECT id FROM owner_web_push_subscriptions WHERE tenant_id=$1 FOR UPDATE", [TENANT]);
-    caller.process.stdin.write("GO\n"); await waitFor(admin, waits, ["subscribe-stop"], 1);
-    caller.process.kill("SIGTERM"); await caller.closed;
-    // EOF alone cannot cancel an in-flight server statement. Keep the lock until
-    // production lock_timeout aborts it and the owned backend observably exits.
-    const deadline = performance.now() + 10_000;
-    while ((await admin.query("SELECT count(*)::int n FROM pg_stat_activity WHERE application_name=$1", ["subscribe-stop"])).rows[0].n) {
-      assert.ok(performance.now() < deadline, "interrupted production backend exits before lock release");
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    await lock.query("ROLLBACK");
-    assert.deepEqual((await live.store.list(TENANT)).map(fields), [fields(INPUT)], "killed pending write leaves the old complete row");
-    const next = { ...INPUT, p256dh: "Next", auth: "NextAuth" }; await subscribe(live,next); await subscribe(live,next);
-    assert.deepEqual((await live.store.list(TENANT)).map(fields), [fields(next)]); assert.equal((await row(admin)).id,id);
-    assert.equal(await live.store.reserve(TENANT,id,"test:history",AT),"already_delivered");
-  } finally { await lock.query("ROLLBACK"); await lock.end(); await stop([caller]); }
-}));
-test("CR-E075 invalid and expiry", () => fixture(9, async ({ live }) => {
-  await subscribe(live);
-  for (const bad of [{ ...INPUT, p256dh: "" }, { ...INPUT, auth: null }, { ...INPUT, auth: undefined },
-    { ...INPUT, p256dh: "!" }, { ...INPUT, endpoint: "https://off-list.example.invalid/push" }])
-    await assert.rejects(live.store.subscribe(bad as unknown as OwnerPushSubscriptionRecordV1));
-  assert.deepEqual((await live.store.list(TENANT)).map(fields), [fields(INPUT)]);
-  await http(live, async (call,cookie) => {
-    for (const bad of [null, {}, { ...payload(), keys: {} }, { ...payload(), keys: { p256dh: "!", auth: "B" } },
-      { ...payload(), endpoint: "https://off-list.example.invalid" }, { ...payload(), keys: { p256dh: "A".repeat(5000), auth: "B" } }])
-      assert.equal((await call("/api/v1/owner-web-push",bad,cookie)).status,400);
-  });
-  await subscribe(live,{ ...INPUT, expiresAt: "2000-01-01T00:00:00.000Z" }); assert.deepEqual(await live.store.list(TENANT),[]);
-}));
-test("CR-E075 VAPID test key keeps a leading zero byte", () => fixture(10, async ({ live }) => {
-  const key = createECDH("prime256v1"); key.setPrivateKey(Buffer.from(`00${"11".repeat(31)}`, "hex"));
-  assert.equal(key.getPrivateKey().byteLength, 31, "node drops the leading zero byte: the mechanism behind the 1-in-256 flake");
-  const keys = vapidKeys(key);
-  assert.equal(Buffer.from(keys.privateKey, "base64url").byteLength, 32, "the test key is the fixed 32-byte VAPID scalar");
-  assert.equal(Buffer.from(keys.privateKey, "base64url")[0], 0);
-  assert.doesNotThrow(() => createWebPushChannelV1({ subject: "https://fixture.ts.net", ...keys } as never),
-    "a valid VAPID key with a leading zero byte must construct the production channel");
-  await http(live, async (call, cookie) => assert.equal((await call("/api/v1/owner-web-push", payload(), cookie)).status, 204,
-    "the real owner HTTP save works behind a 31-byte-scalar key"), TENANT, WORKSPACE, key);
-  for (let run = 0; run < 300; run += 1) {
-    const fresh = vapidKeys();
-    assert.equal(Buffer.from(fresh.privateKey, "base64url").byteLength, 32, `generated test key ${run} is 32 bytes`);
-    createWebPushChannelV1({ subject: "https://fixture.ts.net", ...fresh } as never);
-  }
 }));

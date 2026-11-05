@@ -29,7 +29,7 @@ test('B3a startup recovers the same run without Start',async t=>{
 });
 
 import { ImproveControlRoomLoopServiceV1 } from '../src/web/v1/improve-control-room-loop-service';
-import { createImproveControlRoomLoopAdapterV1, type LoopRecoveryBindingV1, type LoopAdapterV1, type LoopRecoveryChildV1 } from '../src/web/v1/improve-control-room-loop-adapter';
+import { createImproveControlRoomLoopAdapterV1, loopByteHashV1, type LoopRecoveryBindingV1, type LoopAdapterV1, type LoopRecoveryChildV1 } from '../src/web/v1/improve-control-room-loop-adapter';
 import { createImproveControlRoomLoopRecoveryV1 } from '../src/web/v1/improve-control-room-loop-recovery';
 import { taskFixture } from './helpers/web-task';
 import { now } from './helpers/web-foundation';
@@ -161,7 +161,7 @@ import { createImproveControlRoomHttpHandlerV1 } from '../src/web/v1/improve-con
 import { origin,trust,request } from './helpers/web-foundation';
 import { readFile,writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { reachableTests,workflowCommands } from '../scripts/check-test-lane-coverage.mjs';
+import { assertMutationLaneCoverage,reachableTests,workflowCommands } from '../scripts/check-test-lane-coverage.mjs';
 
 test('B3a pending intake and confirm remain owner exact retries',async t=>{
   const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
@@ -282,11 +282,12 @@ test('B3a registration reaches ordinary Pg and unconditional mutation lanes',asy
   const ordinary='tests/improve-control-room-loop-recovery.test.ts',pg='tests/improve-control-room-loop-recovery-postgres.test.ts',mutation='tests/improve-control-room-loop-recovery-mutations.test.ts';
   const reached=reachableTests(scripts,workflowCommands(workflow));for(const name of [ordinary,pg,mutation])assert.ok(reached.has(name));
   const components=reachableTests(scripts,['pnpm test:components']);assert.ok(components.has(ordinary));assert.ok(components.has(pg));assert.ok(!components.has(mutation));
-  const step=workflow.slice(workflow.indexOf('      - name: Prove interrupted loop recovery guards'),workflow.indexOf('      - name: Validate every declared mutation anchor'));
-  assert.match(step,/timeout-minutes: 5/);assert.doesNotMatch(step,/\n\s+(?:if:|continue-on-error:)/);
-  assert.ok(workflow.indexOf('Prove saved loop owner decision guards')<workflow.indexOf('Prove interrupted loop recovery guards'));
+  const jobs:Record<string,{steps:{name?:string;if?:boolean|string}[]}>=assertMutationLaneCoverage(scripts,workflow);
+  const broken=structuredClone(jobs);
+  broken['mutation-checks-candidate'].steps.find(step=>step.name==='Prove interrupted loop recovery guards')!.if=false;
+  assert.throws(()=>assertMutationLaneCoverage(scripts,broken),/must be unconditional/,'a conditional recovery step is rejected');
+  console.log('B3a negative proof: conditional recovery step rejected; final job dependency accepted');
   assert.match(scripts['test:improve-control-room-loop-attention-browser'],/tests\/browser\/improve-control-room-loop-attention.spec.ts$/);
-  assert.match(workflow.slice(workflow.indexOf('  mutation-checks:'),workflow.indexOf('\n  pr-claims:')),/timeout-minutes: 45/);
 });
 
 async function recoveryBinding(f:Awaited<ReturnType<typeof recoveryFixture>>){
@@ -556,4 +557,105 @@ test('B3a Stop uses its verified result without a status preflight',async t=>{
   assert.equal((await f.raw.status(f.run)).state,'stopped');
   assert.equal((await bridge.mutate(f.identity,f.projectId,f.id,'stop',body,'b3a-stop-already-stopped')).state,'accepted');
   assert.equal(reads,0,'already stopped runs also use the verified Stop result');
+});
+
+// Report-only intake has its own owned advancement, before Confirm and Start.
+test('B5 completed intake advances once to the desk Confirm gate across service restart', async t => {
+  const f=await taskFixture();t.after(()=>f.db.close());
+  const e=await syntheticRecoveryEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
+  await seedRecoveryRun({...f,db:f.client,scope},e,projectId,()=>now);
+  const originalBindings:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1[]=[];
+  const owner=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:{...e.adapter,intakeDriver:{enabled:()=>false,inspect:async()=>{throw Error('not used');},advance:async()=>{throw Error('not used');}},intake:async(id,b,text,fence)=>{originalBindings.push(b);return e.adapter.intake(id,b,text,fence);}}},()=>now);
+  const intake=await owner.mutate(f.identity,projectId,null,'intake',{description:'SYNTHETIC report-only intake'},'b5-completed-intake-0001');
+  const local=await owner.status(f.identity,projectId,intake.requestId),run=local.request.runLink!.loopRunId;
+  const claim=(await f.client.query<{command_id:string;binding:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1}>(`SELECT command_id,binding FROM control_loop_improvement_commands WHERE command_id=$1 AND entry_kind='claim'`,[intake.commandId])).rows[0]!;
+  const completed={launch_key:'a'.repeat(32),step:1,job_id:'fixture-job',ended:new Date(now).toISOString(),report_sha256:'b'.repeat(64),proposal_sha256:'c'.repeat(64),task_sha256:'d'.repeat(64)};
+  const receiptFile=join(e.root,'intake-receipt.json');let advances=0,enabled=true;
+  const savedReceipt=async()=>{try{return JSON.parse(await readFile(receiptFile,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}};
+  const capability:import('../src/web/v1/improve-control-room-loop-adapter').LoopIntakeDriverCapabilityV1={enabled:()=>enabled,
+    inspect:async id=>{const s=await e.raw.status(id),receipt=await savedReceipt();return{schemaVersion:1,run:s.run,revision:s.revision,inputVersion:Number(s.inputVersion),requestSha256:claim.binding.requestSha256,settingsSha256:s.settingsSha256,mode:receipt?'advanced':'completed',completedResult:receipt?null:completed,receipt,evidenceDigest:sha256Digest({id,receipt})};},
+    advance:async b=>{advances++;assert.deepEqual(b.intakeBinding,originalBindings[0]);assert.equal(b.intakeCommandId,claim.command_id);assert.equal(b.intakeBindingDigest,sha256Digest(originalBindings[0]));assert.equal(b.runLinkId,local.request.runLink!.runLinkId);assert.deepEqual(b.completedResult,completed);assert.equal('authorizationId' in b,false);
+      const receipt={command_id:`loop-command:${sha256Digest(b).slice(7,39)}`,binding_digest:sha256Digest(b),completed_result:completed,intake_command_id:b.intakeCommandId,intake_binding:b.intakeBinding,custody:{...scope,projectId,requestId:intake.requestId,ownerIdentityId:'identity:web',localVersion:1,settingsDigest:b.settingsDigest,runLinkId:b.runLinkId},request_sha256:b.requestSha256,settings_sha256:b.settingsSha256,input_version:b.inputVersion,expected_revision:b.expectedRevision,revision:b.expectedRevision+1,at:new Date(now).toISOString(),state:'waiting_owner' as const,attention:'REQUEST_UNCONFIRMED' as const};
+      await writeFile(receiptFile,JSON.stringify(receipt));await e.edit(run,{revision:receipt.revision});return{kind:'advanced',receipt,observation:await capability.inspect(run)};}};
+  const target={projectId,requestId:intake.requestId,ownerIdentityId:'identity:web'};
+  const reopen=()=>{const adapter=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,intakeDriver:capability}});t.after(()=>adapter.close());
+    return new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:{...adapter,status:async id=>({...await adapter.status(id),decisions:{gate:await savedReceipt()?{kind:'confirm'}:null,observedAt:new Date(now).toISOString()}})}},()=>now);};
+  let bridge=reopen();
+  await bridge.status(f.identity,projectId,intake.requestId);await bridge.viewDesk(f.identity,projectId);assert.equal(advances,0,'GETs remain observational');
+  assert.ok((await bridge.recoveryPort().scan(null,8)).targets.some(v=>v.requestId===intake.requestId),'accepted linked intake is scanned before Start');
+  await bridge.recoveryPort().reconcile(target,signal());assert.equal(advances,1);
+  assert.deepEqual((await bridge.status(f.identity,projectId,intake.requestId)).decisions?.gate,{kind:'confirm'});
+  for(let restart=0;restart<2;restart++){bridge=reopen();await bridge.recoveryPort().reconcile(target,signal());}
+  assert.equal(advances,1,'saved native receipt prevents another advance after restart');
+  enabled=false;await bridge.recoveryPort().reconcile(target,signal());assert.equal(advances,1);
+  assert.equal((await f.client.query<{n:number}>(`SELECT count(*)::int n FROM control_loop_improvement_commands WHERE request_id=$1 AND operation IN ('confirm','start')`,[intake.requestId])).rows[0]!.n,0,'recovery stops at Confirm');
+});
+
+test('B5 refused stopped and already-confirmed intake never calls the driver',async t=>{
+  const f=await recoveryFixture(t);let calls=0;
+  const driver={enabled:()=>true,inspect:async()=>{calls++;throw Error('forbidden intake inspection');},advance:async()=>{calls++;throw Error('forbidden intake advance');}};
+  const service=f.service({...f.seedAdapter,intakeDriver:driver});
+  await service.recoveryPort().reconcile(f.target,signal());assert.equal(calls,0,'already confirmed');
+  const draft=await service.mutate(f.identity,f.projectId,null,'intake',{description:'SYNTHETIC terminal intake'},'b5-terminal-intake-0001');
+  const run=(await service.status(f.identity,f.projectId,draft.requestId)).request.runLink!.loopRunId;
+  for(const state of ['refused','stopped','finished'] as const){await f.edit(run,{state});await service.recoveryPort().reconcile({...f.target,requestId:draft.requestId},signal());}
+  assert.equal(calls,0,'terminal intake never enters driver');
+});
+
+test('B5 tools intake contract consumes the product admission envelope and replays its receipt',
+  {skip:!process.env.CONTROL_ROOM_B5_INTAKE_CONTRACT?'Requires supplied tools contract path (synthetic invoker; no model launch).':false},async t=>{
+  const {pathToFileURL}=await import('node:url');
+  const tools=await import(pathToFileURL(process.env.CONTROL_ROOM_B5_INTAKE_CONTRACT!).href);
+  const f=await taskFixture();t.after(()=>f.db.close());const e=await syntheticRecoveryEngine(t);
+  const scope={tenantId:'tenant:web',workspaceId:'workspace:web'},projectId=f.project.projectId;
+  await f.client.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',$2::jsonb) WHERE id=$1`,[projectId,JSON.stringify({schema:'control-room.project-presentation/v1',templateId:'control-room',configurationDigest:'sha256:'+'a'.repeat(64),templateDisplayName:'Control Room',enabledModules:[]})]);
+  const completed={launch_key:'a'.repeat(32),step:1,job_id:'fixture-job',ended:new Date(now).toISOString(),report_sha256:'b'.repeat(64),proposal_sha256:'c'.repeat(64),task_sha256:'d'.repeat(64)};
+  const receiptFile=join(e.root,'tools-intake-receipt.json');let claims=0;
+  const native=async(run:string)=>{
+    const s=await e.raw.status(run);let receipt=null;
+    try{receipt=JSON.parse(await readFile(receiptFile,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    return{schema_version:1,run,revision:s.revision,input_version:Number(s.inputVersion),request_sha256:loopByteHashV1(s.description),settings_sha256:s.settingsSha256,mode:receipt?'advanced':'completed',completed_result:receipt?null:completed,receipt};
+  };
+  const driver=tools.a2IntakeDriverV1(e.configuration.contract.lineage,e.configuration,async(args:string[])=>{
+    const run=args[1]!;
+    if(args[2]==='claim'){
+      claims++;const expect=JSON.parse(await readFile(args[args.indexOf('--expect')+1]!,'utf8'));
+      assert.equal(expect.intake_binding.tenantId,scope.tenantId);assert.equal(expect.intake_binding.projectId,projectId);
+      const receipt={command_id:expect.command_id,binding_digest:expect.binding_digest,completed_result:expect.completed_result,
+        intake_command_id:expect.intake_command_id,intake_binding:expect.intake_binding,custody:expect.custody,
+        request_sha256:expect.request_sha256,settings_sha256:expect.settings_sha256,input_version:expect.input_version,
+        expected_revision:expect.revision,revision:expect.revision+1,at:new Date(now).toISOString(),state:'waiting_owner',attention:'REQUEST_UNCONFIRMED'};
+      await writeFile(receiptFile,JSON.stringify(receipt));const s=await e.raw.status(run);
+      await e.edit(run,{revision:receipt.revision,progress:{...s.progress,attention:'owner'}});
+    }
+    return{status:0,stdout:JSON.stringify(await native(run))};
+  });
+  const configuration={...e.configuration,adapterId:tools.A2_BRIDGE_ADAPTER_ID,contract:{...e.configuration.contract,intakeDriver:driver,
+    generateRunId:()=> 'b5-tools-intake',decodeStatus:(v:unknown)=>{const s=e.configuration.contract.decodeStatus(v);return{...s,run:{...s.run,adapterId:tools.A2_BRIDGE_ADAPTER_ID}};},
+    decisionProjection:{questionTextPath:['counters','questionText'],decodeGate:(_v:unknown,s:import('../src/web/v1/improve-control-room-loop-adapter').LoopEngineStatusV1)=>s.progress.attention==='owner'?{kind:'confirm'}:null}}};
+  const raw=createImproveControlRoomLoopAdapterV1(configuration);t.after(()=>raw.close());
+  const adapter={...raw,intake:async(id:string,b:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1,text:string,fence:()=>void)=>{
+    const s=await raw.intake(id,b,text,fence);s.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted' as const,error:null,evidenceDigest:sha256Digest({id})});await e.edit(b.loopRunId,s);return s;}};
+  const open=()=>new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter},()=>now);
+  let bridge=open();const intake=await bridge.mutate(f.identity,projectId,null,'intake',{description:'SYNTHETIC tools custody integration'},'b5-tools-intake-0001');
+  assert.equal(intake.state,'accepted');const target={projectId,requestId:intake.requestId,ownerIdentityId:'identity:web'};
+  await bridge.status(f.identity,projectId,intake.requestId);assert.equal(claims,0);
+  await Promise.all([bridge.recoveryPort().reconcile(target,signal()),open().recoveryPort().reconcile(target,signal())]);
+  assert.equal(claims,1,'competing owners issue only one tools claim');
+  bridge=open();await bridge.recoveryPort().reconcile(target,signal());assert.equal(claims,1);
+  assert.deepEqual((await bridge.status(f.identity,projectId,intake.requestId)).decisions?.gate,{kind:'confirm'});
+  console.log('RESULT B5 tools contract product_envelope=true claims=1 restart_advances=0 gate=confirm model_launches=0');
+});
+
+test('B5 recovery sweep logs the original bounded publication cause once',async t=>{
+  const {LoopFinalizationFailureV1}=await import('../src/web/v1/improve-control-room-loop-finalization');
+  const warnings:unknown[][]=[];
+  t.mock.method(console,'warn',(...args:unknown[])=>warnings.push(args));
+  const target={projectId:'project:diagnostic',requestId:'request:diagnostic',ownerIdentityId:'owner:diagnostic'};
+  const worker=createImproveControlRoomLoopRecoveryV1({enabled:()=>true,
+    observe:async()=>{throw new LoopFinalizationFailureV1('PUBLICATION_RECORD_FAILED',new Error('conflict'));},
+    port:{scan:async()=>({targets:[target],nextCursor:null}),reconcile:async()=>({state:'blocked'})},
+    createCycle:()=>({tick(){},close:async()=>{}})});
+  try{await worker.tick();}finally{await worker.close();}
+  assert.deepEqual(warnings,[['loop_finalization_sweep_failed','PUBLICATION_RECORD_FAILED','Error','conflict']]);
 });

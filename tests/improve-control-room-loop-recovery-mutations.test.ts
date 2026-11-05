@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile,execFileSync } from 'node:child_process';
-import { mkdir,mkdtemp,readFile,rm,symlink } from 'node:fs/promises';
+import { mkdir,mkdtemp,readFile,writeFile,rm,symlink } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { assertGuardBites } from './support/attack-kit/index';
 const exec=promisify(execFile),root=resolve('.');
 const probes=[
   {name:'readiness before recovery discovery',file:'src/web/v1/private-task-startup.ts',find:'      dependencies.install(installed);',replace:'      recoveryWorker?.start(); dependencies.install(installed);',pattern:'B3a R2 readiness failure never starts recovery discovery',assertion:'B3a no recovery discovery before every readiness gate succeeds'},
-  {name:'recovered command cleanup',file:'src/web/v1/improve-control-room-loop-service.ts',find:'      await this.#releaseCommandFiles(claim);',replace:'      /* MUTANT: retain recovered command files. */',pattern:'B3a R2 recovered result releases only its command files after commit',assertion:'B3a recovered result commits before releasing command files'},
+  {name:'recovered command cleanup',file:'src/web/v1/improve-control-room-loop-service.ts',find:'      await this.#releaseCommandFiles(claim);\n    }\n    snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));',replace:'      /* MUTANT: retain recovered command files. */\n    }\n    snapshot=await this.db.transaction(tx=>this.#recoverySnapshot(tx,target));',pattern:'B3a R2 recovered result releases only its command files after commit',assertion:'B3a recovered result commits before releasing command files'},
   {name:'terminal inspection short circuit',file:'src/web/v1/improve-control-room-loop-service.ts',find:"    if (['stopped','finished','refused'].includes(status.state)) return blocked;",replace:'    /* MUTANT: inspect already terminal roots. */',pattern:'B3a R2 verified terminal status needs no recovery inspection',assertion:'B3a terminal status avoids redundant recovery inspection without a terminal cache'},
   {name:'verified changed input reason',file:'src/web/v1/improve-control-room-loop-service.ts',find:"        recoveryInputChanged = recoveryCurrent && recovery.mode === 'input_changed';",replace:'        recoveryInputChanged = false;',pattern:'B3a R2 verified changed input is shown explicitly',assertion:'B3a verified changed input retains its reason'},
   {name:'explicit A2 qualification absence',file:'tests/improve-control-room-loop-recovery.test.ts',find:"test('B3a reviewed A2 recovery contract',{skip:process.env.CONTROL_ROOM_B3A_REQUIRE_A2!=='1' ? 'Requires reviewed A2 pins in R and production ownership capability; integration unproven.' : false},async t=>{",replace:"test('B3a reviewed A2 recovery contract',async t=>{ if(process.env.CONTROL_ROOM_B3A_REQUIRE_A2!=='1')return;",pattern:'B3a R2 ordinary A2 gate reports its missing qualification',assertion:'B3a ordinary lane explicitly reports A2 qualification absent'},
@@ -29,10 +29,16 @@ test('B3a recovery guard categories fail independently and restore green',{timeo
   try{
     execFileSync('git',['-c','core.hooksPath=/dev/null','clone','--local','--no-hardlinks','--quiet',root,copy],{timeout:120000});
     await symlink(join(root,'node_modules'),join(copy,'node_modules'),'dir');
+    // Mutations exercise this worktree's changes before commit, including the
+    // matching bounded reason schema and diagnostic tests.
+    for(const file of [...new Set([...probes.map(p=>p.file),'tests/improve-control-room-loop-recovery.test.ts',
+      'src/web/v1/improve-control-room-loop-finalization.ts','src/web/v1/improve-control-room-loop-attention-wire.ts',
+      'src/improve-control-room/v1/loop-candidate-publisher.ts'])])
+      await writeFile(join(copy,file),await readFile(join(root,file)));
     for(const probe of probes)await t.test(probe.name,async()=>{
       const testCmd=[process.execPath,'scripts/run-tests-with-quarantine.mjs','--import','tsx','--test',`--test-name-pattern=^${probe.pattern}$`,'tests/improve-control-room-loop-recovery.test.ts'];
       const original=await readFile(join(copy,probe.file),'utf8');
-      const result=await assertGuardBites({root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd,boundMs:45000,because:probe.assertion});
+      const result=await assertGuardBites({root:copy,file:probe.file,find:probe.find,replace:probe.replace,testCmd,boundMs:45000,allowDirtyTree:true,because:probe.assertion});
       assert.equal(result.applied,true);assert.equal(result.exitCode,1);assert.equal(result.signal,null);
       assert.ok(result.output.includes(probe.assertion),`loaded mutant reaches independent assertion: ${probe.assertion}`);
       assert.match(result.output,/ERR_ASSERTION/u);assert.match(result.output,/# fail 1/u);assert.doesNotMatch(result.output,/SyntaxError|# skipped [1-9]|# tests 0|timed out|migration_altered:/iu);

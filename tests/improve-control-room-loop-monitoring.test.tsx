@@ -24,7 +24,7 @@ if(process.env.CONTROL_ROOM_B3B_LOAD!=='1')test('B3b refresh without browser',as
 
 import { mkdir,mkdtemp,writeFile,readFile,rm,chmod,symlink,stat } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { fork,type ChildProcess } from 'node:child_process';
 import type { TestContext } from 'node:test';
 import { createImproveControlRoomLoopMonitorV1,decodeLoopHealthV1,loopMonitoringStatusSchemaV1,loopMonitoringAttentionV1,
@@ -36,17 +36,34 @@ const payload=(now:number,available=true)=>Buffer.from(JSON.stringify({schema_ve
 async function fixture(t:TestContext,existingRoot?:string,fileName='health.json'){
   await mkdir(resolve('.test-tmp'),{recursive:true});const root=existingRoot??await mkdtemp(resolve('.test-tmp/b3b-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
-  let wall=Date.parse('2026-10-01T00:00:00.000Z'),mono=0,calls=0,available=true,fail=false,latency=0;
+  let wall=Date.parse('2026-10-01T00:00:00.000Z'),mono=0,calls=0,enabledCalls=0,available=true,fail=false,latency=0;
   const file=join(root,fileName);
   const clock:LoopMonitoringClockV1={wallNow:()=>wall,monotonicNow:()=>mono,setTimeout,clearTimeout};
-  const configuration={availabilityFile:file,bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),enabled:()=>true,clock,
+  const configuration={availabilityFile:file,bootstrapHash:'0'.repeat(64),binding:'b'.repeat(64),enabled:()=>{enabledCalls++;return true;},clock,
     collect:async(_signal:AbortSignal,onChild:(pid:number)=>Promise<void>)=>{calls++;await onChild(process.pid);wall+=latency;mono+=latency;if(fail)throw Error('SYNTHETIC failure');return{exitCode:available?0:5,bytes:payload(wall,available)};}};
   const monitor=createImproveControlRoomLoopMonitorV1(configuration);t.after(()=>monitor.close());
   const schedule=async()=>JSON.parse(await readFile(file+'.schedule.json','utf8'));
   async function idle(){await until(async()=>!existsSync(file+'.monitor.lock'));await new Promise<void>(r=>setImmediate(r));}
-  async function tick(m=monitor){m.tick();await new Promise<void>(r=>setTimeout(r,20));await idle();}
+  // A refresh reads the schedule before it creates the lock and only clears its pending flag after it removes
+  // the lock, so idle() alone can return early and the next tick can be dropped. A due tick therefore re-ticks
+  // until its refresh shows evidence (lock created, or enabled() consulted beyond the ticks issued here) and
+  // then waits for idle(); a tick that is plainly not due returns synchronously and has nothing to wait for.
+  let skewed=false;
+  function plainlyNotDue(){
+    if(skewed||!Number.isFinite(wall))return !Number.isFinite(wall);
+    try{const s=JSON.parse(readFileSync(file+'.schedule.json','utf8'));
+      return wall<Date.parse(s.nextAttemptAt)&&!(s.checkedAt&&Date.parse(s.checkedAt)>wall)&&!(s.lastAttemptAt&&Date.parse(s.lastAttemptAt)>wall)&&Date.parse(s.nextAttemptAt)<=wall+3031000;
+    }catch{return false;}
+  }
+  let ticks=0;
+  async function tick(m=monitor){
+    const skip=plainlyNotDue(),before=enabledCalls-ticks;ticks++;m.tick();
+    if(!skip){const end=Date.now()+5000;
+      while(Date.now()<end&&enabledCalls-ticks<=before&&!existsSync(file+'.monitor.lock')){await new Promise<void>(r=>setTimeout(r,2));ticks++;m.tick();}}
+    await idle();
+  }
   return{root,file,configuration,monitor,clock,schedule,tick,idle,calls:()=>calls,wall:()=>wall,mono:()=>mono,
-    advance(ms:number){wall+=ms;mono+=ms;},rewind(ms:number){wall-=ms;},setWall(ms:number){wall=ms;},fail(v:boolean){fail=v;},available(v:boolean){available=v;},latency(ms:number){latency=ms;}};
+    advance(ms:number){wall+=ms;mono+=ms;},rewind(ms:number){skewed=true;wall-=ms;},setWall(ms:number){skewed=true;wall=ms;},fail(v:boolean){fail=v;},available(v:boolean){available=v;},latency(ms:number){latency=ms;}};
 }
 const ordinary=process.env.CONTROL_ROOM_B3B_LOAD!=='1';
 if(ordinary){
@@ -86,11 +103,18 @@ if(ordinary){
   });
   test('B3b normal cadence and one bounded retry',async t=>{
     const f=await fixture(t);await f.tick();assert.equal(f.calls(),1);f.monitor.assertAvailability();
-    f.advance(2999999);await f.tick();assert.equal(f.calls(),1,'B3b premature collection count remains one');
+    // tick() admits work asynchronously. An absent lock at this instant does
+    // not prove that a premature collector will not be admitted just afterwards.
+    const assertNoCollection=async(count:number,message:string)=>{
+      const deadline=Date.now()+500;
+      do{await new Promise<void>(r=>setTimeout(r,10));assert.equal(f.calls(),count,message);}while(Date.now()<deadline);
+      await f.idle();assert.equal(f.calls(),count,message);
+    };
+    f.advance(2999999);await f.tick();await assertNoCollection(1,'B3b premature collection count remains one');
     f.advance(1);f.fail(true);const old=await readFile(f.file);await f.tick();assert.equal(f.calls(),2);assert.deepEqual(await readFile(f.file),old);
-    assert.equal((await f.schedule()).nextKind,'retry');f.advance(299999);await f.tick();assert.equal(f.calls(),2);
+    assert.equal((await f.schedule()).nextKind,'retry');f.advance(299999);await f.tick();await assertNoCollection(2,'B3b retry waits for its due time');
     f.advance(1);await f.tick();assert.equal(f.calls(),3);assert.equal((await f.schedule()).nextKind,'normal');
-    f.advance(2999999);await f.tick();assert.equal(f.calls(),3);f.fail(false);f.advance(1);await f.tick();assert.equal(f.calls(),4);f.monitor.assertAvailability();
+    f.advance(2999999);await f.tick();await assertNoCollection(3,'B3b exhausted retry waits for normal cadence');f.fail(false);f.advance(1);await f.tick();assert.equal(f.calls(),4);f.monitor.assertAvailability();
   });
   test('B3b three hours retain the freshness margin and recovery retry',async t=>{
     const f=await fixture(t);f.latency(31000);await f.tick();

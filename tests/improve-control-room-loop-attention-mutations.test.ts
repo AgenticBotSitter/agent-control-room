@@ -11,7 +11,7 @@ const probes=[
   {name:"discovery creator",file:"src/improve-control-room/v1/service.ts",find:"AND r.owner_identity_id=$3",replace:"AND ($3::text IS NOT NULL)",
     suite:"tests/improve-control-room-loop-attention.test.tsx",pattern:"B2b discovery creator predicate",assertion:"B2b discovery excludes foreign creators before status"},
   {name:"complete document binding",file:"src/web/v1/improve-control-room-loop-adapter.ts",
-    find:"if (loopByteHashV1(bytes) !== expected.reportSha256 || JSON.stringify(decoded) !== JSON.stringify(expected)) throw unavailable();",
+    find:"if (loopByteHashV1(bytes) !== expected.reportSha256 || JSON.stringify(decoded) !== JSON.stringify(expected)) throw unavailable(\"approval_document_pin\");",
     replace:"/* MUTANT: exact document hash and descriptor binding disabled. */",
     suite:"tests/improve-control-room-loop-bridge.test.ts",pattern:"B2b approval document isolation",assertion:"B2b changed complete text is refused before approval"},
   {name:"shared attention 403 clearing",file:"private-app/app/shared-task-attention.ts",

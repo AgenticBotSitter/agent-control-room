@@ -1,6 +1,10 @@
--- Provisional migration 0311; lead to renumber. Admission only, no paid execution.
+-- Paid admission only, no paid execution.
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
+-- Validate 0314 constraints in the following migration transaction, as in 0308.
+ALTER TABLE control_loop_policy_layers VALIDATE CONSTRAINT control_loop_policy_locked_paths_check;
+ALTER TABLE control_loop_policy_input_sources VALIDATE CONSTRAINT control_loop_policy_sources_waiver_fk;
+ALTER TABLE control_loop_improvement_commands VALIDATE CONSTRAINT control_loop_improvement_commands_check1;
 -- Names measured in migrated pg_constraint; retain stable names for earlier downs.
 ALTER TABLE control_loop_improvement_commands DROP CONSTRAINT control_loop_improvement_commands_binding_check;
 -- Validate signed history atomically with both replacements; lock and statement waits are bounded above.
