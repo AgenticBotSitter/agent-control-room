@@ -177,7 +177,7 @@ const loopExpected = { expectedVersion: loopVersion, expectedRevision: engineRev
 export const loopBridgeOperationSchemaV1 = z.enum(["intake", "confirm", "start", "stop", "approve", "answer"]);
 export type LoopBridgeOperationV1 = z.infer<typeof loopBridgeOperationSchemaV1>;
 export const loopBridgeBodiesV1 = {
-  intake: z.object({ description: loopDescription, settingsEdits: z.string().optional() }).strict(),
+  intake: z.object({ description: loopDescription, settingsEdits: z.string().optional(), waiverId: id.optional() }).strict(),
   confirm: z.object({ ...loopExpected, requestSha256: rawHash, settingsSha256: rawHash }).strict(),
   start: z.object({ ...loopExpected, runLinkId: id }).strict(),
   stop: z.object({ runLinkId: id }).strict(),

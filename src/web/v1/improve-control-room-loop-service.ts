@@ -534,7 +534,7 @@ export class ImproveControlRoomLoopServiceV1 {
           return undefined;
         }
         if (!this.#adapter.available(operation)) throw unavailable();
-        return this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined);
+        return this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined, body.waiverId as string | undefined);
       });
       if (policyPreflight) await this.#policy.check(policyPreflight);
     }
@@ -574,13 +574,14 @@ export class ImproveControlRoomLoopServiceV1 {
       let observed: LoopEngineStatusV1 | undefined;
       if (requestId === null) {
         if (!policyPreflight) throw conflict();
-        const fresh = await this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined);
+        const fresh = await this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined, body.waiverId as string | undefined);
         this.#policy.assertSnapshot(policyPreflight, fresh);
         const draft = await lineage.saveLoopDraft(identity, projectId, { description: body.description,
           settingsText: fresh.text }, idempotencyKey);
         local = await lineage.loopBridgeLineage(tx, projectId, draft.request.requestId, actor.id);
+        await this.#policy.consumeWaiver(tx, projectId, local.root.id, fresh);
         await this.#policy.recordInputSources(tx, { requestId: local.root.id, inputVersion: Number(local.input.version),
-          defaultsSha256: fresh.defaultsSha256, layerVersions: fresh.layerVersions, waiverId: null });
+          defaultsSha256: fresh.defaultsSha256, layerVersions: fresh.layerVersions, waiverId: fresh.waiverId ?? null });
       } else {
         local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
         const run = this.#run(local);
@@ -614,6 +615,7 @@ export class ImproveControlRoomLoopServiceV1 {
             if (priorConfirmation) this.#verify(priorConfirmation);
             if (local.authorization || priorConfirmation) throw conflict();
           }
+          if (operation === "start") await this.#policy.validateStartWaiver(tx, projectId, requestId, Number(local.input.version));
           if (operation === "start" && (body.runLinkId !== local.link!.id || observed.state !== "ready")) throw conflict();
           if (operation === "approve") {
             const a = observed.approval;

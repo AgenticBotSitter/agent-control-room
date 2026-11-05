@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f",
-  "note": "Measured on native PostgreSQL 17 through 0309 provider prices; web and updater query digests match."
+  "digest": "0c8044142b71e057fab5fc9f89e1f3aad93b773966932ab8c31fa3d447be3f29",
+  "note": "Through 0310 policy enforcement. Web and updater queries agree in PGlite and native PostgreSQL 17."
 }

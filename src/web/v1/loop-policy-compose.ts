@@ -53,3 +53,30 @@ export function composeLoopSettingsV1(input: { defaultsText: string; project?: s
   if (Buffer.byteLength(text, "utf8") > 65536) throw invalid();
   return { text, sha256: createHash("sha256").update(text).digest("hex") };
 }
+
+const lockPath = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
+export function normalizeLoopLockedPathsV1(input: unknown): string[] {
+  if (!Array.isArray(input) || input.length > 100 || input.some(path => typeof path !== 'string' || path.length > 256
+    || !lockPath.test(path) || path.split('.').some(segment => forbidden.has(segment))) || new Set(input).size !== input.length) throw invalid();
+  return [...input].sort();
+}
+function atPath(value: unknown, path: string): { exists: boolean; value?: unknown } {
+  for (const segment of path.split('.')) {
+    if (!object(value) || !Object.hasOwn(value, segment)) return { exists: false };
+    value = value[segment];
+  }
+  return { exists: true, value };
+}
+/** Compare effective values to defaults + project, including absent descendants. */
+export function differingLoopLockedPathsV1(baseText: string, candidateText: string, paths: readonly string[]): string[] {
+  const base = parseLoopSettingsV1(baseText), candidate = parseLoopSettingsV1(candidateText);
+  return paths.filter(path => {
+    const before = atPath(base, path), after = atPath(candidate, path);
+    if (!before.exists) throw invalid();
+    return !after.exists || encode(before.value) !== encode(after.value);
+  });
+}
+export function validateLoopLockedPathsV1(baseText: string, paths: readonly string[]) {
+  const base = parseLoopSettingsV1(baseText);
+  if (paths.some(path => !atPath(base, path).exists)) throw invalid();
+}

@@ -491,12 +491,14 @@ test("B1b status is observational and no contract enables no route",async t=>{
   assert.throws(()=>createImproveControlRoomHttpHandlerV1({origin,trust}),/service_required/);
 });
 
-test("B1b Stop still targets the original owned run after local draft/settings change",async t=>{
+test("B1b Stop still targets the original owned run after refused settings change",async t=>{
   const f=await fixture(t),id=await f.intake(),s=await f.confirm(id);
   assert.equal((await f.post(`${encodeURIComponent(id)}/start`, { expectedVersion: s.request.currentVersion,
     expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId })).status, 202);
   const desk=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,f.adapter.contract);
-  await desk.reviseLoopDraft(f.identity,f.project.projectId,{requestId:id,expectedVersion:1,description:"Changed local draft.",settingsText:JSON.stringify({changed:true})},"b1b-changed-local-0001");
+  const before=(await f.db.query("SELECT * FROM control_loop_improvement_inputs ORDER BY version")).rows;
+  await assert.rejects(desk.reviseLoopDraft(f.identity,f.project.projectId,{requestId:id,expectedVersion:1,description:"Changed local draft.",settingsText:JSON.stringify({changed:true})},"b1b-changed-local-0001"),{code:"conflict"});
+  assert.deepEqual((await f.db.query("SELECT * FROM control_loop_improvement_inputs ORDER BY version")).rows,before);
   const response=await f.post(`${encodeURIComponent(id)}/stop`,{runLinkId:s.request.runLink!.runLinkId});
   assert.equal((await response.json() as {state:string}).state,"accepted");
   assert.equal((await f.get(id)).engine.state,"stopped");

@@ -170,7 +170,9 @@ for(const mode of ['private','Mac-local'] as const)test(`S1 ${mode} Node actual 
   assert.equal(await send(path,body,k),201,'S1 provider Node PUT must persist');assert.equal(await send(path,body,k),200);
   assert.equal(await send(path,{expectedVersion:1,provider:provider({display_name:'Replacement'})}),201);
   assert.equal((await f.rows())[0].length,1);assert.equal((await f.rows())[2][0]!.version,2);
-  for(const layer of ['project','selection'])assert.equal(await send(`/api/v1/projects/${f.project.projectId}/loop-policy/${layer}`,{expectedVersion:0,settings:'{}'}),201,'S1 policy Node PUT must persist');
+  assert.equal(await send(`/api/v1/projects/${f.project.projectId}/loop-policy/project`,{expectedVersion:0,settings:'{}'}),400,'P72 project PUT requires lockedPaths');
+  assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,0);
+  for(const layer of ['project','selection'])assert.equal(await send(`/api/v1/projects/${f.project.projectId}/loop-policy/${layer}`,{expectedVersion:0,settings:'{}',...(layer==='project'?{lockedPaths:[]}: {})}),201,'S1 policy Node PUT must persist');
   assert.equal((await f.db.query('SELECT * FROM control_loop_policy_events')).rows.length,2);
   const saved=await f.rows();
   for(const bad of [path+'/extra',path+'/',path+'?x=1','/api/v1/loop-providers/UPPER',`/api/v1/projects/${f.project.projectId}/loop-policy/other`,'/api/v1/neighbour']){const n=calls;assert.equal(await send(bad,{}),405);assert.equal(calls,n);}

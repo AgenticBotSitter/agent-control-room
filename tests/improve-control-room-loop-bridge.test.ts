@@ -1271,7 +1271,7 @@ test("P71 adapter rejects wrong signed text before every non-stop operation", as
 test('P71 A and B signed copies survive layers, normalized confirmation and restart with distinct settings paths',async t=>{
   const f=await fixture(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const policy=new LoopPolicyServiceV1(f.client,scope,f.adapter,()=>now);
-  await policy.put(f.identity,f.project.projectId,'project',{expectedVersion:0,settings:'{"fixture":"A"}'},'p71-bridge-layer-a-0001');
+  await policy.put(f.identity,f.project.projectId,'project',{expectedVersion:0,settings:'{"fixture":"A"}',lockedPaths:[]},'p71-bridge-layer-a-0001');
   const a=await f.intake(),aState=await f.get(a),aRun=aState.request.runLink!.loopRunId;
   const history=(await f.db.query('SELECT * FROM control_loop_improvement_inputs WHERE request_id=$1',[a])).rows;
   await policy.put(f.identity,f.project.projectId,'selection',{expectedVersion:0,settings:'{"fixture":"B"}'},'p71-bridge-layer-b-0001');

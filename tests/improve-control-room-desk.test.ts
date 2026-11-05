@@ -587,8 +587,12 @@ test("B1a historical save and edit replays project the current authorized input"
   const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
   const edit = { requestId: f.start.requestId, expectedVersion: 1,
     description: "Second saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 2 }\n' };
+  const writesBeforeRefusal = f.writes();
+  await assert.rejects(f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-refused-0001"), { code: "conflict" });
+  assert.equal(f.writes(), writesBeforeRefusal, "D4 linked settings refusal appends no records");
+  edit.settingsText = f.draft.settingsText;
   await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-0001");
-  const latest = { description: "Third saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 3 }\n' };
+  const latest = { description: "Third saved request.", settingsText: f.draft.settingsText };
   await f.desk.reviseLoopDraft(f.identity, projectId, { requestId: f.start.requestId, expectedVersion: 2, ...latest },
     "loop-replay-edit-0002");
   await f.desk.authorizeLoopStart(f.identity, projectId, { ...f.start, expectedVersion: 3,

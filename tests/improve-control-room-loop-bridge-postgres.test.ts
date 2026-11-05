@@ -169,6 +169,7 @@ test("B1b SQL claim uniqueness guard",async()=>run(async pg=>{
 test("B1b empty down/re-up and failed migration roll back atomically",async()=>run(async pg=>{
   const baseline=await readPrivateWebSchemaDigest({query:async(q,p)=>sql(pg,q,p)});
   const down=await readFile("db/down/0302_control_loop_improvement_commands.sql","utf8"),up=await readFile("db/migrations/0302_control_loop_improvement_commands.sql","utf8");
+  await sql(pg,await readFile("db/down/0310_control_loop_policy_enforcement.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0307_control_loop_policy_validate.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0306_control_loop_policy.sql","utf8"),[],"migrator");
   await sql(pg,down,[],"migrator");
@@ -178,6 +179,7 @@ test("B1b empty down/re-up and failed migration roll back atomically",async()=>r
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0306_control_loop_policy.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0307_control_loop_policy_validate.sql","utf8")}\nCOMMIT;`,[],"migrator");
+  await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0310_control_loop_policy_enforcement.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,"GRANT SELECT,INSERT ON control_loop_improvement_commands TO control_room_private_web");
   const roleSql=await readFile("db/roles/private_web_roles.sql","utf8");
   await sql(pg,"BEGIN;"+roleSql.slice(roleSql.indexOf("-- P71:")));
@@ -325,19 +327,19 @@ test("P71 PostgreSQL production grants, immutable sources/audit, copies and reta
     }
     const columns=(await w.client.query<{attname:string}>(`SELECT attname FROM pg_attribute WHERE attrelid='control_loop_policy_layers'::regclass
       AND attnum>0 AND NOT attisdropped AND has_column_privilege(current_user,attrelid,attnum,'UPDATE') ORDER BY attname COLLATE "C"`)).rows.map(r=>r.attname);
-    assert.deepEqual(columns,['last_idempotency_key','last_request_digest','settings_sha256','settings_text','updated_at','updated_by','version']);
+    assert.deepEqual(columns,['last_idempotency_key','last_request_digest','locked_paths','settings_sha256','settings_text','updated_at','updated_by','version']);
     const desired=JSON.parse(await readFile('deploy/postgres/desired-grants.json','utf8')).desired as string[];
-    const declared=desired.filter(value=>value.startsWith('control_room_private_web|table|public.control_loop_policy_')).sort();
+    const declared=desired.filter(value=>tables.some(table=>value.startsWith(`control_room_private_web|table|public.${table}|`))).sort();
     const observed=[];
     for(const table of tables){
       observed.push(`control_room_private_web|table|public.${table}||SELECT|plain`,`control_room_private_web|table|public.${table}||INSERT|plain`);
       if(table===tables[0])for(const column of columns)observed.push(`control_room_private_web|table|public.${table}|${column}|UPDATE|plain`);
     }
     assert.deepEqual(declared,observed.sort());
-    await w.policy.put(identity,project,'project',{expectedVersion:0,settings:'{"fixture":"A"}'},'p71-native-save-a-0001');
+    await w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:0,settings:'{"fixture":"A"}'},'p71-native-save-a-0001');
     const a=await w.bridge.mutate(identity,project,null,'intake',{description:'Saved A copy'},'p71-native-intake-a-0001');assert.equal(a.state,'accepted');
     const oldInput=(await sql(pg,'SELECT row_to_json(i)::text bytes FROM control_loop_improvement_inputs i WHERE request_id=$1',[a.requestId])).rows;
-    await w.policy.put(identity,project,'project',{expectedVersion:1,settings:'{"fixture":"B"}'},'p71-native-save-b-0001');
+    await w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:1,settings:'{"fixture":"B"}'},'p71-native-save-b-0001');
     const b=await w.bridge.mutate(identity,project,null,'intake',{description:'Saved B copy'},'p71-native-intake-b-0001');assert.equal(b.state,'accepted');
     const aInput=(await sql(pg,'SELECT settings_text FROM control_loop_improvement_inputs WHERE request_id=$1',[a.requestId])).rows[0];
     const bInput=(await sql(pg,'SELECT settings_text FROM control_loop_improvement_inputs WHERE request_id=$1',[b.requestId])).rows[0];
@@ -398,14 +400,14 @@ test('P71 PostgreSQL 24 checked writers, replay, distinct-owner mutex and intake
   const record=(tx:DatabaseSession):DatabaseSession=>({query:async(sql,params)=>{try{return await tx.query(sql,params);}catch(error){const code=databaseSqlStateV1(error);if(code)states.push(code);throw error;}}});
   const adapter={...e.adapter,checkSettings:barrier.check},clients=Array.from({length:24},()=>pgPolicy(pg,adapter,identity,record));
   try{
-    const results=await Promise.allSettled(clients.map((w,i)=>w.policy.put(identity,project,'project',{expectedVersion:0,settings:'{"fixture":"one"}'},`p71-native-contend-${String(i).padStart(4,'0')}`)));
+    const results=await Promise.allSettled(clients.map((w,i)=>w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:0,settings:'{"fixture":"one"}'},`p71-native-contend-${String(i).padStart(4,'0')}`)));
     assert.equal(barrier.reached,24,'all 24 checks executed outside the commit transaction');
     assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
     for(const result of results)if(result.status==='rejected')assert.equal(result.reason.code,'conflict');
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,1);
     const pair=checkBarrier(2),same={...e.adapter,checkSettings:pair.check},a=pgPolicy(pg,same),b=pgPolicy(pg,same);
     try{
-      const replays=await Promise.all([a,b].map(w=>w.policy.put(identity,project,'project',{expectedVersion:1,settings:'{"fixture":"two"}'},'p71-native-replay-pair-0001')));
+      const replays=await Promise.all([a,b].map(w=>w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:1,settings:'{"fixture":"two"}'},'p71-native-replay-pair-0001')));
       assert.deepEqual(replays.map(r=>r.replayed).sort(),[false,true]);assert.equal(pair.reached,2);
     }finally{await a.close();await b.close();}
     const who=await secondOwner(pg),first=pgPolicy(pg,e.adapter,identity,record),second=pgPolicy(pg,e.adapter,who,record),blocker=new Client(pg.admin());
@@ -449,7 +451,7 @@ test('P71 PostgreSQL dropped commit connection rolls back layer/event and retry 
     if(statement.includes('INSERT INTO control_loop_policy_events')&&!interrupted){interrupted=true;await sql(pg,'SELECT pg_terminate_backend($1)',[pid]);}
     return tx.query(statement,params);
   }}));
-  const body={expectedVersion:0,settings:'{}'},key='p71-native-interrupted-save-0001';
+  const body={lockedPaths:[],expectedVersion:0,settings:'{}'},key='p71-native-interrupted-save-0001';
   try{await assert.rejects(w.policy.put(identity,project,'project',body,key));assert.equal(interrupted,true);
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_layers')).rows[0].n,0);
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,0);
@@ -478,6 +480,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
     const before=(await admin.query('SELECT * FROM control_loop_improvement_commands')).rows;
     for(const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
       assert.equal((await admin.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
+    await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
     await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
     const schemaBefore=await readPrivateWebSchemaDigest(admin);
     await assert.rejects(admin.query(await readFile('db/down/0306_control_loop_policy.sql','utf8')),
@@ -486,6 +489,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
     assert.deepEqual((await admin.query('SELECT * FROM control_loop_improvement_commands')).rows,before);
     assert.equal(await readPrivateWebSchemaDigest(admin),schemaBefore,'named refusal leaves the entire pre-down schema intact');
     await admin.query(await readFile('db/migrations/0307_control_loop_policy_validate.sql','utf8'));
+    await admin.query(await readFile('db/migrations/0310_control_loop_policy_enforcement.sql','utf8'));
     assert.equal(await readPrivateWebSchemaDigest(admin),privateWebSchemaDigest,'re-validating P71 restores its release pin after refusal');
     console.log('P71 retained_commands=1 named_down_refusal=23514 rows_unchanged=true schema_unchanged=true P71_pin_restored=true');
   }finally{await admin.end();await w.close();}
@@ -499,13 +503,14 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
     assert.equal(await validated(),true,'fresh production migration validates the command predicate');
     await admin.query(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
     await admin.query(await readFile('db/down/0308_control_loop_providers.sql','utf8'));
+    await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
     await admin.query(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
     assert.equal(await validated(),false,'validation down restores NOT VALID while preserving the predicate');
     await admin.query(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
     assert.equal(await validated(),true,'0306 down restores the validated pre-P71 predicate');
     // The release pin shipped immediately before P71 (7cc303ebc).
     assert.equal(await readPrivateWebSchemaDigest(admin),'8cbc9b7afcb491a0e41f500bde4e919c57e2e8e257caa5e6687ca87c5e66ee4c');
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     for(const entry of await collectLedgerEntries(resolve('.'))){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
     await mkdir(join(stage,'db/setup'),{recursive:true});await writeFile(join(stage,'db/setup/production_migration_ledger.sql'),await readFile('db/setup/production_migration_ledger.sql'));
@@ -534,9 +539,10 @@ test('P71 PostgreSQL empty down/re-up and injected migration failure preserve le
 test('P71 PostgreSQL previous-release signed rows survive production upgrade and legacy Start',async()=>run(async pg=>{
   await sql(pg,await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0308_control_loop_providers.sql','utf8'),[],'migrator');
+  await sql(pg,await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0306_control_loop_policy.sql','utf8'),[],'migrator');
-  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/roles/%'");
+  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0306%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
   await seed(pg);const e=engine(),w=web(pg,e.adapter);
   try{
     const description='Retained pre-policy input.';
@@ -560,7 +566,7 @@ test('P71 PostgreSQL previous-release signed rows survive production upgrade and
     assert.deepEqual(await saved(),before,'no backfill rewrites prior signed rows');
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,0,'missing source stays legacy, never an inferred waiver');
     assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest);
-    await w.policy.put(identity,project,'project',{expectedVersion:0,settings:'{"fixture":"FUTURE_ONLY"}'},'p71-legacy-future-layer-0001');
+    await w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:0,settings:'{"fixture":"FUTURE_ONLY"}'},'p71-legacy-future-layer-0001');
     const started=await w.bridge.mutate(identity,project,requestId,'start',{expectedVersion:1,expectedRevision:2,runLinkId:link.runLink.runLinkId},'p71-legacy-start-0001');
     assert.equal(started.state,'accepted');assert.deepEqual(await saved(),before);
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,0);
@@ -577,7 +583,7 @@ test(`P71 PostgreSQL distinct-owner intake versus PUT waits at the initial proje
   };
   if (schedule === 'intake-first') {
     const initial = web(pg, e.adapter);
-    try { await initial.policy.put(identity, project, 'project', { expectedVersion: 0, settings: '{}' }, 'p71-mutex-explicit-seed-0001'); }
+    try { await initial.policy.put(identity, project, 'project', {lockedPaths:[], expectedVersion: 0, settings: '{}' }, 'p71-mutex-explicit-seed-0001'); }
     finally { await initial.close(); }
   }
   {
@@ -594,7 +600,7 @@ test(`P71 PostgreSQL distinct-owner intake versus PUT waits at the initial proje
       const before=Number((await blocker.query('SELECT deadlocks FROM pg_stat_database WHERE datname=$1',[pg.database])).rows[0].deadlocks);
       await blocker.query('BEGIN');await blocker.query('SELECT id FROM projects WHERE id=$1 FOR UPDATE',[project]);
       const intake=bridge.mutate(other,project,null,'intake',{description:'Current signed snapshot'},`p71-mutex-intake-${schedule}-0001`);
-      const put=policy.put(identity,project,'project',{expectedVersion:schedule==='put-first'?0:1,settings:schedule==='put-first'?'{}':'{"fixture":"future"}'},`p71-mutex-put-${schedule}-0001`);
+      const put=policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:schedule==='put-first'?0:1,settings:schedule==='put-first'?'{}':'{"fixture":"future"}'},`p71-mutex-put-${schedule}-0001`);
       const all=Promise.allSettled([intake,put]); // observe both rejections before either is awaited
       let waiters=0;const deadline=Date.now()+10000;
       while(Date.now()<deadline){await blocker.query('SELECT pg_stat_clear_snapshot()');waiters=Number((await blocker.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM projects%FOR UPDATE%'",[pg.database])).rows[0].n);if(waiters===2)break;await new Promise(r=>setTimeout(r,10));}
@@ -617,4 +623,264 @@ test(`P71 PostgreSQL distinct-owner intake versus PUT waits at the initial proje
       console.log(`P71 intake_PUT schedule=${schedule} distinct_owners=2 initial_project_waiters=${waiters} SQLSTATEs=${JSON.stringify(states)} deadlock_delta=${after-before}`);
     }finally{releaseIntake();releasePut();await blocker.query('ROLLBACK');await blocker.end();await reader.close();await writer.close();}
   }
+}));
+
+// P72 uses the production login and separate connections; no synthetic PG substitute.
+const p72Locked=(error:unknown)=>error instanceof Error&&'reasons' in error
+  && (error as {reasons:{code:string}[]}).reasons[0]?.code==='POLICY_LOCKED';
+async function p72Waiver(w:ReturnType<typeof web>,path='fixture') {
+  return (await w.policy.createWaiver(identity,project,{path,reason:'One bounded synthetic exception',expiresAt:new Date(Date.now()+300000).toISOString()},`p72-waiver-${randomBytes(12).toString('hex')}`)).waiver;
+}
+test('P72 PostgreSQL production waiver grants owner transition scope expiry and retained down',async()=>run(async pg=>{
+  await seed(pg);const e=engine(),w=web(pg,e.adapter);
+  try{
+    const guards=['guard_control_loop_policy_locked_paths','guard_control_loop_policy_source_waiver','guard_control_loop_policy_waiver'];
+    const configs=(await sql(pg,'SELECT proname,proconfig FROM pg_proc WHERE proname=ANY($1::text[]) ORDER BY proname',[guards])).rows;
+    assert.deepEqual(configs,guards.map(proname=>({proname,proconfig:['search_path=pg_catalog, public, pg_temp']})));
+    const table='control_loop_policy_waivers';
+    for(const right of ['SELECT','INSERT'])assert.equal((await w.client.query<{yes:boolean}>('SELECT has_table_privilege(current_user,$1,$2) yes',[table,right])).rows[0]!.yes,true);
+    for(const right of ['UPDATE','DELETE','TRUNCATE'])assert.equal((await w.client.query<{yes:boolean}>('SELECT has_table_privilege(current_user,$1,$2) yes',[table,right])).rows[0]!.yes,false);
+    const columns=(await w.client.query<{attname:string}>(`SELECT attname FROM pg_attribute WHERE attrelid=$1::regclass
+      AND attnum>0 AND NOT attisdropped AND has_column_privilege(current_user,attrelid,attnum,'UPDATE') ORDER BY attname COLLATE "C"`,[table])).rows.map(r=>r.attname);
+    assert.deepEqual(columns,['consumed_by_request_id','revoked_at']);
+    for(const role of ['control_room_application','control_room_reader','control_room_schedule_admissions','control_room_github_broker','control_room_work_intake','control_room_backup'])
+      assert.equal((await sql(pg,"SELECT has_any_column_privilege($1,$2,'SELECT,INSERT,UPDATE,REFERENCES') yes",[role,table])).rows[0].yes,false);
+    const createSql=`INSERT INTO control_loop_policy_waivers(tenant_id,project_id,id,path,reason,created_by,created_at,expires_at)
+      VALUES($1,$2,$3,'fixture','Synthetic exception',$4,statement_timestamp(),statement_timestamp()+interval '1 day')`;
+    await sql(pg,"UPDATE control_role_grants SET role_key='operator' WHERE identity_id=$1",[owner]);
+    await assert.rejects(w.client.query(createSql,[scope.tenantId,project,'waiver:denied',owner]),{sqlState:'42501'});
+    assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_waivers')).rows[0].n,0);
+    await sql(pg,"UPDATE control_role_grants SET role_key='owner' WHERE identity_id=$1",[owner]);
+    const replayKey='p72-native-expiry-replay-0001';
+    const replayBody={path:'fixture',reason:'Exact expiry retry',expiresAt:new Date(Date.now()+300000).toISOString()};
+    const created=await w.policy.createWaiver(identity,project,replayBody,replayKey);
+    assert.equal(created.replayed,false);
+    assert.deepEqual(await w.policy.createWaiver(identity,project,replayBody,replayKey),{...created,replayed:true});
+    await assert.rejects(w.policy.createWaiver(identity,project,{...replayBody,expiresAt:replayBody.expiresAt.replace('Z','001Z')},replayKey),{code:'conflict'});
+    assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_waivers')).rows[0].n,1,'changed expiry retry writes nothing');
+    await w.policy.put(identity,project,'project',{expectedVersion:0,settings:'{}',lockedPaths:[]},'p72-native-paths-project-0001');
+    await w.policy.put(identity,project,'selection',{expectedVersion:0,settings:'{}'},'p72-native-paths-select-0001');
+    for(const paths of [null,{},[1],['fixture','fixture'],['z','a'],['fixture.0'],['__proto__'],Array.from({length:101},(_,i)=>`key${i}`)])
+      await assert.rejects(w.client.query("UPDATE control_loop_policy_layers SET locked_paths=$1::jsonb WHERE layer='project'",[JSON.stringify(paths)]),{sqlState:'23514'});
+    await assert.rejects(w.client.query("UPDATE control_loop_policy_layers SET locked_paths='[\"fixture\"]'::jsonb WHERE layer='selection'"),{sqlState:'23514'});
+    for(const interval of ["interval '8 days'","interval '0 days'"])
+      await assert.rejects(w.client.query(createSql.replace("interval '1 day'",interval),[scope.tenantId,project,'waiver:invalid-expiry',owner]),{sqlState:'23514'});
+    const foreignProject='project:p72-foreign';
+    await sql(pg,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+      SELECT $1,tenant_id,workspace_id,adapter_id,$1,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at FROM projects WHERE id=$2`,[foreignProject,project]);
+    await sql(pg,"INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at) VALUES($1,$2,'active',1,now(),now())",[scope.tenantId,foreignProject]);
+    const foreignDraft=await w.desk.saveLoopDraft(identity,foreignProject,{description:'Other project request',settingsText},'p72-native-foreign-draft-0001');
+    const scoped=await p72Waiver(w);
+    await assert.rejects(w.client.query('UPDATE control_loop_policy_waivers SET consumed_by_request_id=$1 WHERE id=$2',[foreignDraft.request.requestId,scoped.id]),{sqlState:'23514'});
+    const source=await w.desk.saveLoopDraft(identity,project,{description:'Same project request',settingsText},'p72-native-source-draft-0001');
+    await w.client.query('UPDATE control_loop_policy_waivers SET consumed_by_request_id=$1 WHERE id=$2',[source.request.requestId,scoped.id]);
+    await assert.rejects(w.client.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
+      VALUES($1,$2,1,$3,'{"project":0,"selection":0}',$4)`,[scope.tenantId,foreignDraft.request.requestId,loopByteHashV1(settingsText),scoped.id]),{sqlState:'23514'});
+    console.log('P72 native locked_paths_shape_sort_duplicates_selection expiry_same_project_source constraints=23514');
+    const waiver=await p72Waiver(w);
+    for(const statement of ["UPDATE control_loop_policy_waivers SET reason='mutated'","DELETE FROM control_loop_policy_waivers","TRUNCATE control_loop_policy_waivers"])
+      await assert.rejects(w.client.query(statement),{sqlState:'42501'});
+    await w.policy.revokeWaiver(identity,project,waiver.id);await w.policy.revokeWaiver(identity,project,waiver.id);
+    await assert.rejects(w.client.query('UPDATE control_loop_policy_waivers SET revoked_at=NULL'),{sqlState:'23514'});
+    const draft=await w.desk.saveLoopDraft(identity,project,{description:'Synthetic unused request',settingsText},'p72-transition-draft-0001');
+    await assert.rejects(w.client.query('UPDATE control_loop_policy_waivers SET consumed_by_request_id=$1 WHERE id=$2',[draft.request.requestId,waiver.id]),{sqlState:'23514'});
+    const expired=(await sql(pg,`INSERT INTO control_loop_policy_waivers(tenant_id,project_id,id,path,reason,created_by,created_at,expires_at)
+      VALUES($1,$2,'waiver:expired','fixture','Expired exception',$3,statement_timestamp()-interval '2 days',statement_timestamp()-interval '1 day') RETURNING id`,[scope.tenantId,project,owner])).rows[0];
+    await assert.rejects(w.client.query('UPDATE control_loop_policy_waivers SET consumed_by_request_id=$1 WHERE id=$2',[draft.request.requestId,expired.id]),{sqlState:'23514'});
+    const before=await readPrivateWebSchemaDigest(w.client);
+    await assert.rejects(sql(pg,await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'),[],'migrator'),{code:'23514',message:'loop policy enforcement retained'});
+    assert.equal(await readPrivateWebSchemaDigest(w.client),before);
+    assert.equal(before,privateWebSchemaDigest);
+    const updater=digestReleaseSchemaRowsV1((await w.client.query(await readFile('src/updater/v1/pg/release-schema-digest.sql','utf8'))).rows);
+    assert.equal(updater,before);
+    console.log(`P72 PG17 measured_web=${before} measured_updater=${updater} owner_SQLSTATE=42501 mutation_SQLSTATE=23514 retained_down=refused`);
+  }finally{await w.close();}
+}));
+
+test('P72 PostgreSQL one waiver 24 checked intakes one consumption source input and claim',async()=>run(async pg=>{
+  await seed(pg);const e=engine(),initial=web(pg,e.adapter),barrier=checkBarrier(24),states:string[]=[];
+  let waiverId:string;
+  try{
+    await initial.policy.put(identity,project,'project',{expectedVersion:0,settings:'{}',lockedPaths:['fixture']},'p72-concurrent-lock-0001');
+    waiverId=(await p72Waiver(initial)).id;
+  }finally{await initial.close();}
+  const traced=(tx:DatabaseSession):DatabaseSession=>({query:async(sql,params)=>{try{return await tx.query(sql,params);}catch(error){const state=databaseSqlStateV1(error);if(state)states.push(state);throw error;}}});
+  const adapter={...e.adapter,checkSettings:barrier.check};
+  const clients=Array.from({length:24},()=>{
+    const w=pgPolicy(pg,adapter,identity,traced);
+    const db:DatabaseClient={query:w.client.query.bind(w.client),transaction:fn=>w.client.transaction(tx=>fn(traced(tx))),transactionWithPreCommitCheck:(fn,check)=>w.client.transactionWithPreCommitCheck(tx=>fn(traced(tx)),check)};
+    return {...w,bridge:new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:KEY,adapter})};
+  });
+  try{
+    const results=await Promise.allSettled(clients.map((w,i)=>w.bridge.mutate(identity,project,null,'intake',
+      {description:'Single-use exception',settingsEdits:'{"fixture":"exception"}',waiverId},`p72-waiver-contend-${String(i).padStart(4,'0')}`)));
+    assert.equal(barrier.reached,24,'all 24 callers passed preflight and checked');
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    for(const loser of results.filter(r=>r.status==='rejected'))assert.ok(p72Locked(loser.reason));
+    for(const table of ['control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_policy_input_sources'])
+      assert.equal((await sql(pg,`SELECT count(*)::int n FROM ${table}`)).rows[0].n,1);
+    assert.equal((await sql(pg,"SELECT count(*)::int n FROM control_loop_improvement_commands WHERE entry_kind='claim'")).rows[0].n,1);
+    const winner=(await sql(pg,'SELECT request_id,waiver_id FROM control_loop_policy_input_sources')).rows[0];
+    const consumed=(await sql(pg,'SELECT consumed_by_request_id FROM control_loop_policy_waivers WHERE id=$1',[waiverId])).rows[0];
+    assert.equal(winner.waiver_id,waiverId);assert.equal(consumed.consumed_by_request_id,winner.request_id);
+    await assert.rejects(clients[0]!.client.query('UPDATE control_loop_policy_waivers SET consumed_by_request_id=NULL WHERE id=$1',[waiverId]),{sqlState:'23514'});
+    assert.deepEqual(states,[],'no SQLSTATE deadlock or serialization error hidden as a passing loser');
+    console.log(`P72 waiver barrier callers=24 checked=${barrier.reached} winners=1 POLICY_LOCKED=23 drafts=1 inputs=1 sources=1 claims=1 SQLSTATEs=${JSON.stringify(states)}`);
+  }finally{barrier.release();await Promise.all(clients.map(w=>w.close()));}
+}));
+
+for(const order of ['put-first','intake-first'] as const)
+test(`P72 PostgreSQL lock PUT versus waiver intake current locks and project wait: ${order}`,async()=>run(async pg=>{
+  await seed(pg);const other=await secondOwner(pg),e=engine(),initial=web(pg,e.adapter);
+  let waiverId:string;
+  try{
+    await initial.policy.put(identity,project,'project',{expectedVersion:0,settings:'{"locked":"base","other":"base"}',lockedPaths:['locked']},'p72-race-initial-0001');
+    waiverId=(await p72Waiver(initial,'locked')).id;
+  }finally{await initial.close();}
+  let checked!:()=>void,releaseCheck!:()=>void;
+  const ready=new Promise<void>(r=>{checked=r;}),gate=new Promise<void>(r=>{releaseCheck=r;});
+  let entered!:()=>void,releaseConsume!:()=>void;
+  const held=new Promise<void>(r=>{entered=r;}),consumeGate=new Promise<void>(r=>{releaseConsume=r;});
+  const states:string[]=[];
+  const reader=web(pg,{...e.adapter,checkSettings:async()=>{checked();await gate;return{eligible:true,reasons:[]};}}),writer=web(pg,e.adapter);
+  const wrap=(tx:DatabaseSession):DatabaseSession=>({query:async(sql,params)=>{
+    try{
+      if(order==='intake-first'&&sql.startsWith('UPDATE control_loop_policy_waivers SET consumed_by_request_id')){entered();await consumeGate;}
+      return await tx.query(sql,params);
+    }catch(error){const state=databaseSqlStateV1(error);if(state)states.push(state);throw error;}
+  }});
+  const db:DatabaseClient={query:reader.client.query.bind(reader.client),transaction:fn=>reader.client.transaction(tx=>fn(wrap(tx))),transactionWithPreCommitCheck:(fn,check)=>reader.client.transactionWithPreCommitCheck(tx=>fn(wrap(tx)),check)};
+  const adapter={...e.adapter,checkSettings:async()=>{checked();await gate;return{eligible:true,reasons:[]};}};
+  const bridge=new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:KEY,adapter});
+  let intake:Promise<unknown>|undefined,put:Promise<unknown>|undefined;
+  try{
+    intake=bridge.mutate(other,project,null,'intake',{description:'Raced exception',settingsEdits:'{"locked":"changed","other":"changed"}',waiverId},`p72-race-intake-${order}`);
+    const observed=Promise.allSettled([intake]);await ready;
+    const save=()=>writer.policy.put(identity,project,'project',{expectedVersion:1,settings:'{"locked":"base","other":"base"}',lockedPaths:['locked','other']},`p72-race-put-${order}`);
+    if(order==='put-first'){
+      await save();releaseCheck();const result=await observed;
+      assert.equal(result[0]!.status,'rejected');if(result[0]!.status==='rejected')assert.ok(p72Locked(result[0]!.reason));
+      assert.equal((await sql(pg,'SELECT consumed_by_request_id FROM control_loop_policy_waivers')).rows[0].consumed_by_request_id,null);
+      for(const table of ['control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_policy_input_sources','control_loop_improvement_commands'])
+        assert.equal((await sql(pg,`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
+    }else{
+      releaseCheck();await held;put=save();const pendingPut=Promise.allSettled([put]);
+      let waiters=0;const deadline=Date.now()+10000;
+      while(Date.now()<deadline){waiters=Number((await sql(pg,"SELECT count(*)::int n FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM projects%FOR UPDATE%'",[pg.database])).rows[0].n);if(waiters)break;await new Promise(r=>setTimeout(r,10));}
+      assert.equal(waiters,1,'lock PUT really waits behind intake project mutex');releaseConsume();
+      const result=await observed;assert.equal(result[0]!.status,'fulfilled');await put;await pendingPut;
+      assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,1);
+    }
+    assert.deepEqual(states,[]);console.log(`P72 locks schedule=${order} SQLSTATEs=[] no_waiver_burn_on_refusal=true`);
+  }finally{releaseCheck();releaseConsume();await Promise.allSettled([intake,put].filter((v):v is Promise<unknown>=>Boolean(v)));await reader.close();await writer.close();}
+}));
+
+test('P72 PostgreSQL empty down re-up and injected migration failure leave prior schema and ledger',async()=>run(async pg=>{
+  await mkdir(resolve('.test-tmp'),{recursive:true});
+  const stage=await mkdtemp(resolve('.test-tmp/p72-upgrade-'));
+  const admin=new Client(pg.admin());
+  try{
+    await admin.connect();
+    const up='db/migrations/0310_control_loop_policy_enforcement.sql';
+    const after=await readPrivateWebSchemaDigest(admin);
+    await admin.query(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
+    const before=await readPrivateWebSchemaDigest(admin);
+    assert.equal(before,'fed827df03b6b05cb1fc54caf2aafa26154db707aeb436305c1a248c0781c42f');
+    assert.equal((await admin.query("SELECT pg_get_userbyid(relowner) owner FROM pg_class WHERE oid='control_loop_policy_layers'::regclass")).rows[0].owner,'control_room_schema_owner');
+    assert.deepEqual((await admin.query("SELECT attname FROM pg_attribute WHERE attrelid='control_loop_policy_layers'::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege('control_room_web',attrelid,attnum,'UPDATE') ORDER BY attname COLLATE \"C\"")).rows.map(row=>row.attname),
+      ['last_idempotency_key','last_request_digest','settings_sha256','settings_text','updated_at','updated_by','version']);
+    for(const privilege of ['SELECT','INSERT'])assert.equal((await admin.query('SELECT has_table_privilege($1,$2,$3) yes',['control_room_web','control_loop_policy_layers',privilege])).rows[0].yes,true);
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/roles/%'");
+    const ledgerBefore=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
+    const files=execFileSync('git',['ls-files','db/'],{encoding:'utf8'}).trim().split('\n');
+    for(const file of [...files,up]){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),await readFile(file));}
+    await writeFile(join(stage,up),(await readFile(up,'utf8'))+"\nSELECT 1/0;\n");
+    const migrationEnv:NodeJS.ProcessEnv={NODE_ENV:'test',CONTROL_ROOM_MIGRATOR_PASSWORD:pg.connection('migrator').password,CONTROL_ROOM_APP_PASSWORD:pg.connection('app').password,CONTROL_ROOM_SCHEDULER_PASSWORD:pg.connection('scheduler').password,CONTROL_ROOM_WORK_INTAKE_PASSWORD:pg.connection('control_room_work_intake_agent').password};
+    const failedEntries=await collectLedgerEntries(stage);await mkdir(join(stage,'deploy/postgres'),{recursive:true});
+    await writeFile(join(stage,'deploy/postgres/migration-ledger.json'),JSON.stringify({version:1,digest:ledgerDigest(failedEntries),entries:failedEntries}));
+    await assert.rejects(applyMigrations({target:undefined,rootDir:stage,ledgerPath:join(stage,'deploy/postgres/migration-ledger.json'),bootstrapTarget:pg.admin(),migrateTarget:pg.connection('migrator'),env:migrationEnv}),/division by zero/);
+    assert.equal(await readPrivateWebSchemaDigest(admin),before);
+    assert.deepEqual((await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows,ledgerBefore);
+    assert.equal((await admin.query("SELECT to_regclass('control_loop_policy_waivers') name")).rows[0].name,null);
+    await applyMigrations({target:undefined,rootDir:resolve('.'),ledgerPath:resolve('deploy/postgres/migration-ledger.json'),bootstrapTarget:pg.admin(),migrateTarget:pg.connection('migrator'),env:migrationEnv});
+    assert.equal(await readPrivateWebSchemaDigest(admin),after);
+    console.log(`P72 PG17 empty_down_pin=${before} reup_pin=${after} injected_failure=rollback ledger_unchanged=true`);
+  }finally{await admin.end();await rm(stage,{recursive:true,force:true});}
+}));
+
+for(const order of ['start-first','revoke-first'] as const)
+test(`P72 PostgreSQL Start revoke serialization and admission winner: ${order}`,async()=>run(async pg=>{
+  await seed(pg);const other=await secondOwner(pg),e=engine(),w=web(pg,e.adapter);
+  const revoker=web(pg,e.adapter);
+  let unblock!:()=>void,held!:()=>void;
+  const hold=new Promise<void>(r=>{unblock=r;}),ready=new Promise<void>(r=>{held=r;});
+  try{
+    await w.policy.put(identity,project,'project',{expectedVersion:0,settings:'{}',lockedPaths:['fixture']},'p72-start-order-lock-0001');
+    const waiver=await p72Waiver(w);
+    const intake=await w.bridge.mutate(identity,project,null,'intake',{description:'Ordered waiver',settingsEdits:'{"fixture":"exception"}',waiverId:waiver.id},'p72-start-order-intake-0001');
+    let s=await w.bridge.status(identity,project,intake.requestId);
+    await w.bridge.mutate(identity,project,intake.requestId,'confirm',{expectedVersion:1,expectedRevision:s.engine.revision,requestSha256:s.engine.requestSha256,settingsSha256:s.engine.settingsSha256},'p72-start-order-confirm-0001');
+    s=await w.bridge.status(identity,project,intake.requestId);
+    const startBody={expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
+    if(order==='start-first'){
+      const adapter={...e.adapter,start:async(...args:Parameters<LoopAdapterV1['start']>)=>{held();await hold;return e.adapter.start(...args);}};
+      const bridge=new ImproveControlRoomLoopServiceV1(w.client,scope,{integrityKey:KEY,adapter});
+      const starting=bridge.mutate(identity,project,intake.requestId,'start',startBody,'p72-start-order-start-0001');
+      const observed=Promise.allSettled([starting]);await ready;
+      assert.equal((await sql(pg,"SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0].n,1);
+      await revoker.policy.revokeWaiver(other,project,waiver.id);unblock();
+      const result=await observed;assert.equal(result[0]!.status,'fulfilled');assert.equal((await starting).state,'accepted');
+      assert.equal(e.calls.filter(c=>c.op==='start').length,1,'revocation never cancels an admitted Start');
+    }else{
+      const wrap=(tx:DatabaseSession):DatabaseSession=>({query:async<T>(sql:string,params?:unknown[])=>{
+        const value=await tx.query<T>(sql,params);
+        if(sql.startsWith('UPDATE control_loop_policy_waivers SET revoked_at')){held();await hold;}
+        return value;
+      }});
+      const db:DatabaseClient={query:revoker.client.query.bind(revoker.client),transaction:fn=>revoker.client.transaction(tx=>fn(wrap(tx))),transactionWithPreCommitCheck:(fn,check)=>revoker.client.transactionWithPreCommitCheck(tx=>fn(wrap(tx)),check)};
+      const policy=new LoopPolicyServiceV1(db,scope,e.adapter);
+      const revoking=policy.revokeWaiver(other,project,waiver.id);const observedRevoke=Promise.allSettled([revoking]);await ready;
+      const starting=w.bridge.mutate(identity,project,intake.requestId,'start',startBody,'p72-start-order-start-0001');
+      const observedStart=Promise.allSettled([starting]);
+      let waiters=0;const deadline=Date.now()+10000;
+      while(Date.now()<deadline){waiters=Number((await sql(pg,"SELECT count(*)::int n FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM projects%FOR UPDATE%'",[pg.database])).rows[0].n);if(waiters)break;await new Promise(r=>setTimeout(r,10));}
+      assert.equal(waiters,1,'Start really waits for revoke transaction');unblock();await revoking;await observedRevoke;
+      const result=await observedStart;assert.equal(result[0]!.status,'rejected');if(result[0]!.status==='rejected')assert.equal(result[0]!.reason.reasons[0].code,'WAIVER_INVALID');
+      assert.equal(e.calls.filter(c=>c.op==='start').length,0);
+      assert.equal((await sql(pg,"SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start' AND entry_kind='claim'")).rows[0].n,0);
+    }
+    console.log(`P72 Start_revoke order=${order} admission_order_wins=true no_driver_leak=true`);
+  }finally{unblock();await w.close();await revoker.close();}
+}));
+
+test('P72 PostgreSQL dropped connection after consumption rolls back then retry consumes once',async()=>run(async pg=>{
+  await seed(pg);const e=engine(),w=web(pg,e.adapter);
+  let waiverId:string;
+  try{
+    await w.policy.put(identity,project,'project',{expectedVersion:0,settings:'{}',lockedPaths:['fixture']},'p72-drop-lock-0001');
+    waiverId=(await p72Waiver(w)).id;
+    let terminated=false;
+    const wrap=(tx:DatabaseSession):DatabaseSession=>({query:async<T>(statement:string,params?:unknown[])=>{
+      const value=await tx.query<T>(statement,params);
+      if(statement.startsWith('UPDATE control_loop_policy_waivers SET consumed_by_request_id')&&!terminated){
+        const pid=(await tx.query<{pid:number}>('SELECT pg_backend_pid() pid')).rows[0]!.pid;terminated=true;await sql(pg,'SELECT pg_terminate_backend($1)',[pid]);
+      }
+      return value;
+    }});
+    const db:DatabaseClient={query:w.client.query.bind(w.client),transaction:fn=>w.client.transaction(tx=>fn(wrap(tx))),transactionWithPreCommitCheck:(fn,check)=>w.client.transactionWithPreCommitCheck(tx=>fn(wrap(tx)),check)};
+    const b=new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:KEY,adapter:e.adapter});
+    await assert.rejects(b.mutate(identity,project,null,'intake',{description:'Interrupted exception',settingsEdits:'{"fixture":"exception"}',waiverId},'p72-drop-intake-0001'));
+    assert.equal(terminated,true);
+    assert.equal((await sql(pg,'SELECT consumed_by_request_id FROM control_loop_policy_waivers WHERE id=$1',[waiverId])).rows[0].consumed_by_request_id,null);
+    for(const table of ['control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_policy_input_sources','control_loop_improvement_commands'])assert.equal((await sql(pg,`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
+    assert.equal(e.calls.length,0);
+  }finally{await w.close();}
+  const retry=web(pg,e.adapter);
+  try{
+    const body={description:'Interrupted exception',settingsEdits:'{"fixture":"exception"}',waiverId};
+    const first=await retry.bridge.mutate(identity,project,null,'intake',body,'p72-drop-intake-0001');assert.equal(first.state,'accepted');
+    const second=await retry.bridge.mutate(identity,project,null,'intake',body,'p72-drop-intake-0001');assert.equal(second.replayed,true);assert.equal(first.requestId,second.requestId);
+    assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,1);
+    console.log('P72 dropped_connection consumed_rollback=true partial_rows=0 retry_sources=1 replay=true');
+  }finally{await retry.close();}
 }));

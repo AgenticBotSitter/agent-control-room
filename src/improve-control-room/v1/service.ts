@@ -539,6 +539,8 @@ export class ImproveControlRoomDeskServiceV1 {
       const current = await this.#loopInput(tx, root);
       if (Number(current.version) !== value.expectedVersion || value.expectedVersion === Number.MAX_SAFE_INTEGER)
         throw new WebAccessError("conflict");
+      // Engine-linked copies cannot be changed in place. Stop and create a new request.
+      if (current.settings_text !== value.settingsText && await this.#loopLink(tx, root)) throw new WebAccessError("conflict");
       const input = await this.#insertLoop(tx, "inputs", { tenant_id: root.tenant_id, request_id: root.id,
         project_id: projectId, owner_identity_id: actor.id, version: value.expectedVersion + 1,
         description: value.description, settings_text: value.settingsText, request_sha256: rawLoopHash(value.description),

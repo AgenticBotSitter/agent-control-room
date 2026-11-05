@@ -2,9 +2,10 @@
 // export CONTROL_ROOM_A2_TEST_LOOP="<pinned lead-tools checkout>/loop"
 // pnpm test:loop-policy:real
 // pnpm test:loop-policy:real:provider
-// pnpm test:loop-policy:real:all (requires both exact named passes)
+// pnpm test:loop-policy:real:enforcement
+// pnpm test:loop-policy:real:all (requires all three exact named passes)
 // Linux CI uses test:improve-control-room:linux-without-macos-host-gates. Its explicit
-// name-pattern excludes only these two cases: the pin's interpreter shim is macOS-only.
+// name-pattern excludes only these three cases: the pin's interpreter shim is macOS-only.
 // <root> is Node's synthetic ancestor: matching it would include every child test.
 // The Mac lane and all gate aliases FAIL if CONTROL_ROOM_A2_TEST_LOOP is missing.
 // test:improve-control-room dispatches by host OS, preserving the frozen CI lane registration.
@@ -26,11 +27,12 @@ if (process.argv[2] === '--host-gate') {
   const names: Record<string, string[]> = {
     settings: ['P71 real settings check'],
     provider: ['P71 real provider settings check'],
-    all: ['P71 real settings check', 'P71 real provider settings check'],
+    enforcement: ['P72 real Start final policy admission'],
+    all: ['P71 real settings check', 'P71 real provider settings check', 'P72 real Start final policy admission'],
   };
   const expected = Object.hasOwn(names, process.argv[3] ?? '') ? names[process.argv[3]!] : undefined;
   if (!expected || process.argv.length !== 4) {
-    console.error('Usage: --host-gate settings|provider|all');
+    console.error('Usage: --host-gate settings|provider|enforcement|all');
     process.exit(1);
   }
   const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
@@ -84,12 +86,12 @@ test("P71 preserves unknown paid-named settings without assigning authority", ()
   }
 });
 
-test("P71 Linux CI excludes exactly two macOS host gates without skip-as-pass", async t => {
+test("P71 Linux CI excludes exactly three macOS host gates without skip-as-pass", async t => {
   const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
   const name = 'test:improve-control-room:linux-without-macos-host-gates';
   const lane = scripts[name] as string;
   const filter = / --test-name-pattern='([^']+)'/.exec(lane);
-  assert.ok(filter, 'Linux lane names its two host-gate exclusions explicitly');
+  assert.ok(filter, 'Linux lane names its three host-gate exclusions explicitly');
   const dispatcher = scripts['test:improve-control-room'] as string;
   assert.ok(dispatcher.startsWith(`if [ "$(uname -s)" = Linux ]; then pnpm run ${name}; else `));
   const host = dispatcher.split('; else ')[1]!.replace(/; fi$/, '');
@@ -105,6 +107,7 @@ test("P71 Linux CI excludes exactly two macOS host gates without skip-as-pass", 
   await writeFile(file, `import test from 'node:test'; import assert from 'node:assert/strict';
     test('P71 real settings check', () => assert.fail('macOS host gate must be separate'));
     test('P71 real provider settings check', () => assert.fail('macOS host gate must be separate'));
+    test('P72 real Start final policy admission', () => assert.fail('macOS host gate must be separate'));
     test('ordinary policy check', () => assert.ok(true));
     test('P71 real settings check neighbour', () => assert.ok(true));
     test('P71 real provider settings check neighbour', () => assert.ok(true));
@@ -203,6 +206,7 @@ test("P71 downgrade refuses retained run-edit commands before changing the schem
   const before = (await f.db.query('SELECT * FROM control_loop_improvement_commands')).rows;
   for (const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
     assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  await f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
   const schemaBefore = await readPrivateWebSchemaDigest(f.client);
   await assert.rejects(f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8')),
@@ -217,6 +221,7 @@ test("P71 empty downgrade restores the validated pre-P71 release schema pin", as
   const f = await policyFixture(t);
   await f.db.exec(await readFile('db/down/0309_control_loop_provider_prices.sql','utf8'));
   await f.db.exec(await readFile('db/down/0308_control_loop_providers.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0310_control_loop_policy_enforcement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0307_control_loop_policy_validate.sql','utf8'));
   await f.db.exec(await readFile('db/down/0306_control_loop_policy.sql','utf8'));
   assert.equal((await f.db.query<{ convalidated: boolean }>("SELECT convalidated FROM pg_constraint WHERE conname='control_loop_improvement_commands_check1'")).rows[0]!.convalidated, true);
@@ -234,14 +239,14 @@ async function policyFixture(t: TestContext) {
   const service = new LoopPolicyServiceV1(f.client, scope, tools, () => now);
   const handler = createLoopPolicyHttpHandlerV1({ origin, trust, service, clock: () => now });
   const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/loop-policy`;
-  const put = (layer: string, body: unknown, k = key()) => handler(request(`${path}/${layer}`, 'PUT', body, k));
+  const put = (layer: string, body: unknown, k = key()) => handler(request(`${path}/${layer}`, 'PUT', layer === 'project' ? { lockedPaths: [], ...body as object } : body, k));
   const count = async () => (await f.db.query<{ n: number }>('SELECT count(*)::int AS n FROM control_loop_policy_events')).rows[0]!.n;
   return { ...f, service, handler, path, put, checks, count, tools, setCheck: (next: typeof check) => { check = next; } };
 }
 
 test("P71 policy replacement, audit, latest replay, stale keys and restart", async t => {
   const f = await policyFixture(t), project = f.project.projectId;
-  assert.deepEqual(await f.service.view(f.identity, project), { project: { version: 0, settingsText: '{}' }, selection: { version: 0, settingsText: '{}' } });
+  assert.deepEqual(await f.service.view(f.identity, project), { project: { version: 0, settingsText: '{}', lockedPaths: [] }, selection: { version: 0, settingsText: '{}' } });
   const k = key(), body = { expectedVersion: 0, settings: '{"roles":{"build":"project"}}' };
   const first = await f.put('project', body, k); assert.equal(first.status, 201); assert.deepEqual(await first.json(), { replayed: false, version: 1 });
   assert.equal(first.headers.get('cache-control'), 'no-store');
@@ -253,7 +258,7 @@ test("P71 policy replacement, audit, latest replay, stale keys and restart", asy
   assert.equal((await f.put('selection', { expectedVersion: 0, settings: '{"z":null}' })).status, 201);
   assert.equal(await f.count(), 3);
   const restarted = new LoopPolicyServiceV1(f.client, scope, f.tools, () => now);
-  assert.deepEqual(await restarted.view(f.identity, project), { project: { version: 2, settingsText: '{"other":true}' }, selection: { version: 1, settingsText: '{"z":null}' } });
+  assert.deepEqual(await restarted.view(f.identity, project), { project: { version: 2, settingsText: '{"other":true}', lockedPaths: [] }, selection: { version: 1, settingsText: '{"z":null}' } });
   assert.equal(f.checks[2], '{"array":[1,2],"other":true,"roles":{"build":"default","final":"default"},"z":null}\n', 'whole-layer save replaces removed keys');
   const events = (await f.db.query<{ before_sha256: string | null; after_sha256: string; version: number }>('SELECT * FROM control_loop_policy_events ORDER BY layer,version')).rows;
   assert.equal(events[0]!.before_sha256, null); assert.equal(events[1]!.before_sha256, sha(body.settings));
@@ -266,9 +271,9 @@ test("P71 owner guard refuses operator, expired and foreign scope before check/w
   assert.equal((await f.put('project', body)).status, 403, 'P71 independent owner-only denial');
   assert.equal(f.checks.length, 0); assert.equal(await f.count(), 0);
   await f.db.query("UPDATE control_role_grants SET role_key='owner'");
-  await assert.rejects(f.service.put({ ...f.identity, expiresAt: new Date(now - 1).toISOString() }, f.project.projectId, 'project', body, key()), { code: 'authentication_required' });
+  await assert.rejects(f.service.put({ ...f.identity, expiresAt: new Date(now - 1).toISOString() }, f.project.projectId, 'project', { ...body, lockedPaths: [] }, key()), { code: 'authentication_required' });
   const otherScope = new LoopPolicyServiceV1(f.client, { ...scope, workspaceId: 'workspace:foreign' }, f.tools, () => now);
-  await assert.rejects(otherScope.put(f.identity, f.project.projectId, 'project', body, key()), { code: 'not_found' });
+  await assert.rejects(otherScope.put(f.identity, f.project.projectId, 'project', { ...body, lockedPaths: [] }, key()), { code: 'not_found' });
   assert.equal(f.checks.length, 0); assert.equal(await f.count(), 0);
 });
 
@@ -309,7 +314,7 @@ test("P71 commit recheck detects equal-bytes version drift, authority expiry and
         }, check); } finally { rolledBack = true; }
       } };
     const service = new LoopPolicyServiceV1(db, scope, f.tools, () => now);
-    await assert.rejects(service.put(f.identity, f.project.projectId, 'project', body, key()), { code: 'conflict' });
+    await assert.rejects(service.put(f.identity, f.project.projectId, 'project', { ...body, lockedPaths: [] }, key()), { code: 'conflict' });
     assert.equal(rolledBack, true); assert.equal(await f.count(), 0);
   }
 });
@@ -630,3 +635,57 @@ function recordedIntakeAdapter(tools: {settingsText:string;checkSettings(text:st
  };
  return {adapter,signedText:()=>signed};
 }
+
+// Required macOS host gate: actual pinned cr Start, with a dry launcher only.
+test('P72 real Start final policy admission', async t => {
+  const f=await realSettingsFixture(t);
+  const shim=await readFile(join(f.root,'tools/bin/lib/python.sh'),'utf8');
+  const pinned=/CR_PYTHON=(\S+)/.exec(shim);assert.ok(pinned);
+  const interpreter=realpathSync(pinned[1]!.replace(/^["']|["']$/g,''));
+  const probe=String.raw`import sys,json,csv,io
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from test_a2_bridge import Bridge
+from test_a2_support import digest
+for blocked in (False,True):
+ d=Bridge();d.setUp()
+ try:
+  assert d.env['CR_DRY_LAUNCH']=='1'
+  intake,e=d.prepare_intake()
+  d.obj(d.cli(*d.intake_args(intake)))
+  d.proposal();d.advance()
+  path,e=d.expectation('confirm')
+  d.obj(d.cli('confirm-request','synth','--sha256',e['request_sha256'],'--json','--expect',path))
+  signed=d.settings_path.read_bytes()
+  alternate=d.root/'work/start-settings.json';alternate.write_bytes(signed)
+  assert alternate!=d.settings_path and digest(alternate.read_bytes())==digest(signed)
+  if blocked:
+   rows=list(csv.DictReader(io.StringIO(d.roster.read_text()),delimiter='\t'))
+   builder=next(r for r in rows if r['name']=='writer')['family']
+   for row in rows:
+    if row['name']=='final-model':row['family']=builder
+   out=io.StringIO();writer=csv.DictWriter(out,fieldnames=list(rows[0]),delimiter='\t',lineterminator='\n');writer.writeheader();writer.writerows(rows)
+   d.roster.write_text(out.getvalue())
+  path,e=d.expectation('start')
+  before=d.path.read_bytes();steps=len(d.load()['steps'])
+  value=d.obj(d.cli('start','synth','--settings',alternate,'--availability',d.root/'work/availability.json','--json','--expect',path),3 if blocked else 0)
+  if blocked:
+   assert value['error']['code']=='LINEUP_INELIGIBLE',value
+   assert d.path.read_bytes()==before
+   assert len(d.load()['steps'])==steps
+   print('P72 actual Start final-builder-family refusal=LINEUP_INELIGIBLE no_mutation=true no_launch=true')
+  else:
+   assert value['request']['settings_sha256']==digest(signed)
+   assert len(d.load()['steps'])==steps+1
+   assert d.load()['steps'][-1]['role']=='plan'
+   alternate.unlink();d.settings_path.unlink()
+   status=d.obj(d.cli('status','synth','--json'))
+   assert status['request']['settings_sha256']==digest(signed)
+   print('P72 actual intake and Start distinct_settings_paths=2 signed_bytes_equal=true source_paths_removed=true retained_hash=true dry_launch_only=true')
+ finally:d.doCleanups()
+`;
+  const {stdout}=await promisify(execFile)(interpreter,['-B','-c',probe,join(f.root,'tools/loop')],{cwd:f.root,timeout:60000,maxBuffer:131072,
+    env:{PATH:'/usr/bin:/bin',TMPDIR:f.root,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1',PYTHONDONTWRITEBYTECODE:'1',NODE_ENV:'test'}});
+  assert.match(stdout,/actual Start final-builder-family refusal=LINEUP_INELIGIBLE/);
+  assert.match(stdout,/signed_bytes_equal=true/);console.log(stdout.trim());
+});
