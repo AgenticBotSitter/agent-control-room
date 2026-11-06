@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { mkdir, mkdtemp, readFile, writeFile, rm, chmod, symlink, link } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, chmod, symlink, link, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -244,4 +244,64 @@ test('T-SNAPSHOT fractional monotonic deadlines accept exactly five seconds and 
       assert.throws(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,deadlineMono:deadlineMono+0.000001,frozenWall:f.wall()}),/selection_source_unavailable/);
     });
   }
+});
+
+for(const replaced of ['root','fence'] as const){
+  test(`T-SNAPSHOT retained lease refuses swapped ${replaced} directory inode`,async t=>{
+    const f=await sourceFixture(t),lease=f.files.acquire();
+    const path=replaced==='root'?f.files.root:join(f.files.root,'fence'),old=path+'.retained';
+    await rename(path,old);await mkdir(path,{mode:0o700});
+    // Keep the same owner nonce: only the inode check can detect this replacement.
+    if(replaced==='root'){
+      await rename(join(old,'fence'),join(path,'fence'));
+      await writeFile(join(path,'current.json'),await readFile(join(old,'current.json')),{mode:0o600});
+    }
+    if(replaced==='fence')await writeFile(join(path,'owner.json'),await readFile(join(old,'owner.json')),{mode:0o600});
+    try{
+      assert.throws(()=>f.files.current(lease,now),/selection_source_unavailable/,'swapped inode must refuse despite identical nonce');
+      assert.throws(()=>lease.release(),/selection_source_unavailable/);
+    }finally{
+      if(replaced==='root')await rename(join(path,'fence'),join(old,'fence'));
+      await rm(path,{recursive:true});await rename(old,path);lease.release();
+    }
+  });
+}
+
+test('T-SNAPSHOT public filesystem refusals are sanitized',async t=>{
+  const f=await sourceFixture(t),lease=f.files.acquire();
+  await rm(join(f.files.root,'current.json'));
+  assert.throws(()=>f.files.current(lease,now),{message:'selection_source_unavailable'});
+  assert.equal(f.files.previous(lease,now),undefined,'missing previous is still a normal bootstrap state');
+  lease.release();
+  await rm(f.exportPath);assert.throws(()=>f.files.rosterText(),{message:'selection_source_unavailable'});
+  await rm(join(f.root,'config/availability.json'));assert.throws(()=>f.files.availability(now),{message:'selection_source_unavailable'});
+  await assert.rejects(f.db.transaction(tx=>f.coordinator.assertCurrent(tx,{} as any)),{message:'selection_source_unavailable'});
+});
+
+test('T-SNAPSHOT release failure after COMMIT reports uncertain outcome and poisons custody',async t=>{
+  const f=await sourceFixture(t);let committed=false;
+  const base:DatabaseClient={query:f.client.query.bind(f.client),transaction:f.client.transaction.bind(f.client),
+    async transactionWithPreCommitCheck(callback,check){
+      const result=await f.client.transactionWithPreCommitCheck(callback,check);committed=true;
+      await writeFile(join(f.files.root,'fence/owner.json'),'{"schemaVersion":1,"nonce":"'+'b'.repeat(32)+'"}');
+      return result;
+    }};
+  const db=withLoopSelectionSourceTransactionsV1(base,f.files);
+  await assert.rejects(db.transaction(async tx=>{f.bind(tx);await f.coordinator.assertCurrent(tx,f.snapshot);
+    await tx.query("UPDATE control_loop_roster_state SET updated_at='2026-01-01T00:00:00Z'");
+  }),{code:'database_outcome_uncertain',message:'database_outcome_uncertain'});
+  assert.equal(committed,true,'database committed before release failed');
+  assert.throws(()=>f.files.acquire(),/selection_source_unavailable/,'custody is poisoned after release failure');
+});
+
+test('T-SNAPSHOT release failure preserves a confirmed rollback error',async t=>{
+  const f=await sourceFixture(t),original=new Error('synthetic transaction refusal');
+  const base:DatabaseClient={query:f.client.query.bind(f.client),transaction:f.client.transaction.bind(f.client),
+    async transactionWithPreCommitCheck(callback,check){
+      try{return await f.client.transactionWithPreCommitCheck(callback,check);}
+      catch(error){await writeFile(join(f.files.root,'fence/owner.json'),'{"schemaVersion":1,"nonce":"'+'b'.repeat(32)+'"}');throw error;}
+    }};
+  const db=withLoopSelectionSourceTransactionsV1(base,f.files);
+  await assert.rejects(db.transaction(async tx=>{await f.coordinator.lockSources(tx);throw original;}),error=>error===original);
+  assert.throws(()=>f.files.acquire(),/selection_source_unavailable/,'release failure poisons custody even after rollback');
 });

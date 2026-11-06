@@ -26,6 +26,13 @@ function checked(path: string, directory = false) {
     || (directory ? !s.isDirectory() : !s.isFile() || s.nlink !== 1 || s.size > selectionSourceMaxBytesV1)) throw unavailable();
   return s;
 }
+// Translate only at capability boundaries. Internal ENOENT remains available to bootstrap/dirty handling.
+function sanitized<T extends unknown[], R>(operation: (...args: T) => R): (...args: T) => R {
+  return (...args) => { try { return operation(...args); } catch (error) {
+    if (error instanceof Error && error.message === "selection_source_busy") throw new Error("selection_source_busy");
+    throw unavailable();
+  } };
+}
 function readOwned(path: string) {
   const before = checked(path), fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -93,10 +100,10 @@ export function createLoopSelectionSourceFilesV1(input: { availabilityFile: stri
     return decodeSelectionSourceBundleV1(readOwned(join(root, "current.json")), now);
   };
   return Object.freeze<LoopSelectionSourceFilesV1>({ root,
-    initialize() { ancestors(dirname(root)); checked(dirname(root), true);
+    initialize: sanitized(() => { ancestors(dirname(root)); checked(dirname(root), true);
       try { mkdirSync(root, { mode: 0o700 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
-      checkRoot(); },
-    acquire() {
+      checkRoot(); }),
+    acquire: sanitized(() => {
       const rootInode = checkRoot();
       try { mkdirSync(fence, { mode: 0o700 }); } catch (e) {
         if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error("selection_source_busy"); throw e;
@@ -106,32 +113,32 @@ export function createLoopSelectionSourceFilesV1(input: { availabilityFile: stri
       const fd = openSync(join(fence, "owner.json"), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       try { writeFileSync(fd, canonicalJson(owner) + "\n"); fsyncSync(fd); } finally { closeSync(fd); }
       syncDirectory(fence); syncRoot();
-      const lease: LoopSelectionSourceLeaseV1 = Object.freeze({ release() {
+      const lease: LoopSelectionSourceLeaseV1 = Object.freeze({ release: sanitized(() => {
         requireLease(lease);
         unlinkSync(join(fence, "owner.json")); syncDirectory(fence); rmdirSync(fence); syncRoot(); active.delete(lease);
-      } });
+      }) });
       active.set(lease, { root: rootInode, fence: inode, owner: canonicalJson(owner) }); requireLease(lease); return lease;
-    },
-    invalidate(lease) { requireLease(lease); atomic(lease, "dirty.json", canonicalJson({ schemaVersion: 1, nonce: nonce() }) + "\n");
+    }),
+    invalidate: sanitized((lease: LoopSelectionSourceLeaseV1) => { requireLease(lease); atomic(lease, "dirty.json", canonicalJson({ schemaVersion: 1, nonce: nonce() }) + "\n");
       requireLease(lease);
       try { unlinkSync(join(root, "current.json")); } catch (e) { if (!missing(e)) throw e; }
-      input.faults?.at("current:remove"); syncRoot(); },
-    current,
-    previous(lease, now) { requireLease(lease); if (dirty()) return undefined;
-      try { return current(lease, now); } catch (e) { if (missing(e)) return undefined; throw e; } },
-    publish(lease, bundle) { requireLease(lease); atomic(lease, "current.json", encodeSelectionSourceBundleV1(bundle));
+      input.faults?.at("current:remove"); syncRoot(); }),
+    current: sanitized(current),
+    previous: sanitized((lease: LoopSelectionSourceLeaseV1, now: number) => { requireLease(lease); if (dirty()) return undefined;
+      try { return current(lease, now); } catch (e) { if (missing(e)) return undefined; throw e; } }),
+    publish: sanitized((lease: LoopSelectionSourceLeaseV1, bundle: SelectionSourceBundleV1) => { requireLease(lease); atomic(lease, "current.json", encodeSelectionSourceBundleV1(bundle));
       requireLease(lease);
       try { unlinkSync(join(root, "dirty.json")); } catch (e) { if (!missing(e)) throw e; }
-      input.faults?.at("dirty:remove"); syncRoot(); },
-    rosterText() { return new TextDecoder("utf-8", { fatal: true }).decode(readOwned(input.rosterFile)); },
-    availability(now) {
+      input.faults?.at("dirty:remove"); syncRoot(); }),
+    rosterText: sanitized(() => new TextDecoder("utf-8", { fatal: true }).decode(readOwned(input.rosterFile))),
+    availability: sanitized((now: number) => {
       const bytes = readOwned(input.availabilityFile);
       const raw = parseStrictJsonV1(new TextDecoder("utf-8", { fatal: true }).decode(bytes), { maxBytes: 65536 });
       const health = normalizeSelectionAvailabilityV1(raw, now);
       // The monitor validates schedule/hash/bootstrap custody as well as health.
       if (canonicalJson(health) !== canonicalJson(normalizeSelectionAvailabilityV1(input.readAvailability(), now))) throw unavailable();
       return health;
-    },
+    }),
     poison() { poisoned = true; },
   });
 }
@@ -156,15 +163,23 @@ export function bindLoopSelectionSourceDeadlineV1(tx: DatabaseSession, value: De
 export function withLoopSelectionSourceTransactionsV1(db: DatabaseClient, files: LoopSelectionSourceFilesV1): DatabaseClient {
   const transaction = db.transactionWithPreCommitCheck.bind(db);
   async function run<T>(callback: (tx: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) {
-    let scope: Scope | undefined;
+    let scope: Scope | undefined, committed = false;
     try {
-      return await transaction(async tx => {
+      const result = await transaction(async tx => {
         if (scopes.has(tx)) throw unavailable();
         scope = { files, live: true, checks: new Set() }; scopes.set(tx, scope);
         return callback(tx);
       }, async () => { await check(); for (const validate of scope?.checks ?? []) await validate(); });
+      committed = true; return result;
     } catch (error) { if (uncertain(error) && scope?.lease) { files.poison(); scope.lease = undefined; } throw error; }
-    finally { if (scope) { try { scope.lease?.release(); } finally { scope.live = false; } } }
+    finally { if (scope) {
+      try { scope.lease?.release(); } catch {
+        files.poison();
+        // A durable claim must reconcile; reporting a rollback here would permit a duplicate retry.
+        if (committed) throw Object.assign(new Error("database_outcome_uncertain"), { code: "database_outcome_uncertain" });
+        // Preserve the original transaction refusal if rollback/COMMIT already failed.
+      } finally { scope.live = false; }
+    } }
   }
   return Object.freeze({ query: db.query.bind(db), transaction: <T>(callback: (tx: DatabaseSession) => Promise<T>) => run(callback, () => {}),
     transactionWithPreCommitCheck: run });
@@ -226,7 +241,9 @@ export class LoopSelectionSnapshotCoordinatorV1 implements LoopSelectionSnapshot
   }
   async assertCurrent(tx: DatabaseSession, checkedSnapshot: SelectionSnapshotV1): Promise<void> {
     if (!this.#started) throw unavailable();
-    const snapshot = selectionSnapshotSchemaV1.parse(checkedSnapshot);
+    const parsed = selectionSnapshotSchemaV1.safeParse(checkedSnapshot);
+    if (!parsed.success) throw unavailable();
+    const snapshot = parsed.data;
     await this.lockSources(tx); const scope = scopeOf(tx, this.input.sourceFiles);
     if (!scope.deadline) throw unavailable();
     const validate = async () => {

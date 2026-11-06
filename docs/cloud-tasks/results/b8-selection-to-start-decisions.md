@@ -168,4 +168,19 @@ T-SNAPSHOT adds zero tables/migrations. B1/B2 remain separate and unbuilt; no se
 
 Round-2 Git staging exits 128 (index.lock creation refused); the brief requires leaving changes uncommitted. The mandatory complete gate exits 1 on dirty qualification tree, with no PASS receipt. The lead must commit and rerun it on the resulting clean product SHA. Standalone diagnostic/portable results do not replace that qualification.
 
-Status: BLOCKED: staging refused; mandatory clean exact-SHA host qualification pending
+
+## D24 — U81-B round-2 execution slice and precise remainder
+
+The lead's round-2 predecessor is ecd87444bed284677fbcbf23c77a60ecbfc8394b; tools 064eb462f3a055da9d3487502108a5292e21eeb0 and T-SNAPSHOT are now qualified prerequisites. Earlier missing-prerequisite statements above describe historical attempts only.
+
+The accepted LOW-2 sizing split is refined to an additive first part, **U81-B1a checker execution**: policy-to-adapter elapsed-time forwarding, entry-to-spawn preparation budget, exactly one 1000-ms admission reserve, positive integer per-call allowances below the unchanged legacy configuration floor, cutoff/abort refusal, TERM/KILL/reap/temporary cleanup, snapshot error/release reporting and their unit/guard-off regressions. This slice enables no new admission path and changes no binding/schema or SQL.
+
+**U81-B1b integrated service admission** remains: one frozen full candidate/command identity for intake/normalized-or-unchanged Confirm/Start; bound acceptance and verified accepted lineage; authority, input, pins, snapshot and exact-candidate revalidation; source guard before writes; deadline-bounded transaction waits/precommit; immutable dispatch capsule from admitted claim; exact-target safe status/selectionTarget; admission T1-T9/T11/T12/T14 plus real-reader zero-claim and service mutation proofs. It must integrate the B1a execution argument using the full remaining-to-D allowance, with no caller reserve subtraction. Monotonic expiry and wall-clock acceptance remain separate fences.
+
+**U81-B2 SQL/PG integration** remains the complete section 4.4 same-commit set with lead-allocated migration filenames, strict optional record/intent predicates, production-role timestamp/claim freshness, legacy and delayed/copied-record positives, fresh/upgrade/down/refused-down/atomic failure, real PG17 caller barriers, per-fence guard-off and aligned grants/ledger/schema pins. B1b must not be described as SQL-backed completion before B2.
+
+U81-A accepted LOWs: one shared project-preview route regex and direct handler 413 coverage; any structured plan/spec/build/final run-edit member deliberately opts into the complete B8 codec; overrides-only edits now also reject unbound authority fields. D01a must consume the existing exact loopSelectionPresetSchemaV1 five-key export, rather than introduce a second preset parser. Browser response validation and cancellation normalization remain U81-C's client/UI boundary; this execution slice does not change that client.
+
+T-SNAPSHOT accepted LOWs: inode-swap tests retain the same nonce (and the original fence inode in the root-swap case), public file errors are sanitized while internal missing-file bootstrap stays intact, successful COMMIT followed by failed release reports database_outcome_uncertain and poisons custody, and the explicit real-tools script now uses the required anchored test name. The portable command uses the merged branch's exact host-case exclusions; neither inherited skip nor fixture counts are real-tools qualification. Native test timeout now measures the integer remaining-to-D allowance, without an extra reserve.
+
+Status: BLOCKED: U81-B1b integrated admission and U81-B2 SQL/PG remain unbuilt

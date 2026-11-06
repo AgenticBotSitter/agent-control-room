@@ -71,6 +71,7 @@ export function normalizeSelectionRunEditsV1(text: string): string {
     || object(roles) && (["plan_reviews", "spec_reviews", "code_reviews"].some(key => Object.hasOwn(roles, key))
       || ["plan", "spec", "build", "final"].some(key => object(roles[key])));
   if (!b8 && !Object.hasOwn(value, "overrides")) return text;
+  assertNoSelectionAuthority(value);
   const overrides = b8 ? decodeSelectionEditsV1(text).overrides : parseSelectionRunOverridesV1(value.overrides);
   return composeLoopSettingsV1({ defaultsText: "{}", runEdits: JSON.stringify({ ...value, overrides }) }).text;
 }

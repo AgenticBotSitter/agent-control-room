@@ -7,6 +7,21 @@ import { promisify } from 'node:util';
 
 type Mutation={name:string;file:string;before:string;after:string;custom?:(source:string)=>string;test:string;title:string;assertion:string};
 const mutations:Mutation[]=[
+  {name:'retained root inode',file:'loop-selection-snapshot.ts',before:'|| !sameFile(owned.root, current)',after:'|| false',
+    test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT retained lease refuses swapped root directory inode',assertion:'swapped inode must refuse despite identical nonce'},
+  {name:'retained fence inode',file:'loop-selection-snapshot.ts',before:'|| !sameFile(owned.fence, checked(fence, true))',after:'|| false',
+    test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT retained lease refuses swapped fence directory inode',assertion:'swapped inode must refuse despite identical nonce'},
+  {name:'sanitized public source error',file:'loop-selection-snapshot.ts',before:'current: sanitized(current),',after:'current,',
+    test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT public filesystem refusals are sanitized',assertion:'selection_source_unavailable'},
+  {name:'release after commit classification',file:'loop-selection-snapshot.ts',before:'if (committed) throw Object.assign',after:'if (false) throw Object.assign',
+    test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT release failure after COMMIT reports uncertain outcome and poisons custody',assertion:'Missing expected rejection'},
+  {name:'admission one reserve',file:'improve-control-room-loop-adapter.ts',before:'context?.mode === "admission" ? 1000 : 0',after:'context?.mode === "admission" ? 0 : 0',
+    test:'loop-policy.test.ts',title:'U81-B1a admission child single reserve W=5000 preparation=200',assertion:'child receives remaining-to-deadline minus exactly one reserve'},
+  {name:'admission preparation cutoff',file:'improve-control-room-loop-adapter.ts',before:'childTimeout <= 0',after:'false',
+    custom:s=>s.replaceAll('execution?.signal.aborted || remaining() <= 0','execution?.signal.aborted').replace('childTimeout <= 0','false'),
+    test:'loop-policy.test.ts',title:'U81-B1a exhausted preparation starts no child W=5000 preparation=4000',assertion:'cutoff refuses before child spawn'},
+  {name:'policy forwarding elapsed',file:'loop-policy-service.ts',before:'execution.timeoutMs - (performance.now() - entered)',after:'execution.timeoutMs',
+    test:'loop-policy.test.ts',title:'U81-B1a policy forwarding deducts elapsed time without a second reserve',assertion:'forwarding time reduces allowance'},
   {name:'monitor source lock',file:'improve-control-room-loop-monitoring.ts',before:'const lease=input.selectionSources?.acquire();',after:'const lease=undefined;',
     test:'improve-control-room-loop-monitoring.test.tsx',title:'T-SNAPSHOT monitor source fence preserves availability and schedule while busy',assertion:'busy source fence must prevent health publication'},
   {name:'monitor producer invalidation',file:'improve-control-room-loop-monitoring.ts',before:'if(lease)input.selectionSources!.invalidate(lease);',after:'if(lease)void lease;',
@@ -58,5 +73,5 @@ test('T-SNAPSHOT independently caught source and transport guard mutations',asyn
     assert.match(mutant.output,new RegExp(escaped(m.assertion)));assert.doesNotMatch(mutant.output,/ERR_MODULE_NOT_FOUND|SyntaxError|test timed out/);
     await writeFile(join(staged,'web/v1',m.file),original);const restored=await run(m);assert.equal(restored.code,0,'restoration must pass: '+restored.output);caught++;
   });
-  assert.equal(caught,mutations.length);console.log('T-SNAPSHOT mutations expected=9 caught='+caught+' restored='+caught+' skips=0');
+  assert.equal(caught,mutations.length);console.log('T-SNAPSHOT/B1a mutations expected='+mutations.length+' caught='+caught+' restored='+caught+' skips=0');
 });

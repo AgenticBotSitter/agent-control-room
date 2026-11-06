@@ -11,7 +11,7 @@ import { now } from "./helpers/web-foundation";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { composeLoopSettingsV1 } from "../src/web/v1/loop-policy-compose";
-import { decodeSelectionEditsV1, encodeSelectionEditsV1, loopSelectionEffortSchemaV1, loopSelectionSchemaV1,
+import { decodeSelectionEditsV1, encodeSelectionEditsV1, normalizeSelectionRunEditsV1, loopSelectionEffortSchemaV1, loopSelectionSchemaV1,
   loopSelectionSlotSchemaV1, loopSelectionPresetSchemaV1, mergeSelectionLayerV1, parseSelectionRunOverridesV1,
   type LoopSelectionProjectionV1 } from "../src/web/v1/loop-selection-wire";
 import { LoopSelectionServiceV1, type LoopSelectionSnapshotGuardV1, type SelectionSnapshotV1 } from "../src/web/v1/loop-selection-service";
@@ -323,7 +323,7 @@ test('U81 registration includes the deciding test without altering P71 real-tool
   assert.match(scripts['test:improve-control-room'], /tests\/loop-selection\.test\.ts/);
   assert.ok(scripts['test:improve-control-room'].includes('pnpm run test:improve-control-room:linux-without-macos-host-gates'));
   assert.ok(scripts['test:improve-control-room:linux-without-macos-host-gates'].includes("--test-name-pattern='^(?!(?:<root>|P71 real (?:provider )?settings check|P72 real Start final policy admission)$).+'"));
-  assert.equal(scripts['test:loop-selection:real'], 'CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/loop-selection-native.test.ts');
+  assert.equal(scripts['test:loop-selection:real'], 'CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern=\'^U81 real selection check$\' tests/loop-selection-native.test.ts');
   assert.equal(scripts['test:loop-selection:host'], 'node scripts/check-loop-selection-host-gate.mjs');
   for (const [name, body] of Object.entries(scripts)) if (name !== 'test:loop-selection:real')
     assert.ok(!(body as string).includes('tests/loop-selection-native.test.ts'), 'host-only test excluded from '+name);
@@ -408,4 +408,16 @@ test('U81 T4 current expectedVersion P71 save reloads the whole merged layer; st
     assert.throws(() => mergeSelectionLayerV1(JSON.stringify({ providerRoute: pair }), selection()), invalid);
     assert.throws(() => decodeSelectionEditsV1(JSON.stringify({ ...selection(), providerRoute: pair })), invalid);
   }
+});
+
+test('U81 direct preview handler enforces its own 8192-byte budget',async t=>{
+  const f=await selectionFixture(t);
+  const response=await f.handler(request(f.path,'POST',{padding:'x'.repeat(8192)}));
+  assert.equal(response.status,413);assert.deepEqual(await response.json(),{error:'request_too_large'});
+  assert.equal(f.checks.length,0);await f.noWrites();
+});
+
+test('U81 overrides-only edits reject unbound authority fields at the P71 boundary',()=>{
+  for(const field of ['run','by','consent','cap','accepted_at','sameFamilyAcknowledgement','acceptSameFamilyRisk'])
+    assert.throws(()=>normalizeSelectionRunEditsV1(JSON.stringify({overrides:{},[field]:'synthetic'})),{code:'invalid_request'},field);
 });

@@ -98,8 +98,13 @@ export class LoopPolicyServiceV1 {
     return this.#compose(await this.#layers(tx, projectId, false), runEdits);
   }
   async checkWith(text: string, context: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> {
-    if (!this.tools.checkSettings) throw new Error("loop_policy_check_unavailable");
-    return this.tools.checkSettings(text, context, execution);
+    const entered = performance.now(), checker = this.tools.checkSettings;
+    if (!checker) throw new Error("loop_policy_check_unavailable");
+    if (!execution) return checker.call(this.tools, text, context);
+    const timeoutMs = Math.floor(execution.timeoutMs - (performance.now() - entered));
+    if (!Number.isSafeInteger(execution.timeoutMs) || timeoutMs <= 0 || execution.signal.aborted)
+      throw new Error("loop_policy_check_unavailable");
+    return checker.call(this.tools, text, context, { signal: execution.signal, timeoutMs });
   }
   assertSnapshot(before: LoopPolicySnapshotV1, after: LoopPolicySnapshotV1) {
     if (before.defaultsSha256 !== after.defaultsSha256 || before.layerVersions.project !== after.layerVersions.project

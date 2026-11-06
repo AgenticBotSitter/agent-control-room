@@ -5,7 +5,8 @@ import type { LoopSelectionServiceV1 } from "./loop-selection-service";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { privateRequestBudgets } from "./private-request-budgets";
 
-export const isLoopSelectionRouteV1 = (path: string) => /^\/api\/v1\/projects\/[^/]+\/loop-selection\/preview$/.test(path);
+const selectionRoute = /^\/api\/v1\/projects\/([^/]+)\/loop-selection\/preview$/;
+export const isLoopSelectionRouteV1 = (path: string) => selectionRoute.test(path);
 export function createLoopSelectionHttpHandlerV1(options: { origin: string; service: LoopSelectionServiceV1;
   trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
   localOwnerSession?: LocalOwnerSessionServiceV1 }) {
@@ -20,7 +21,7 @@ export function createLoopSelectionHttpHandlerV1(options: { origin: string; serv
       const identity = local ? local.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
       if (url.search) throw new WebAccessError("invalid_request");
-      const route = /^\/api\/v1\/projects\/([^/]+)\/loop-selection\/preview$/.exec(url.pathname);
+      const route = selectionRoute.exec(url.pathname);
       if (!route) throw new WebAccessError("not_found");
       let projectId: string;
       try { projectId = decodeURIComponent(route[1]!); } catch { throw new WebAccessError("invalid_request"); }

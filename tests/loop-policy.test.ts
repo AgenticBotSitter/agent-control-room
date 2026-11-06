@@ -638,14 +638,14 @@ import { canonicalJson } from '../src/security';
 import { encodeSelectionSourceBundleV1,selectionSnapshotFromBundleV1 } from '../src/web/v1/loop-selection-snapshot-wire';
 
 /** Synthetic executable only: validates product transport, never qualifies Python policy. */
-async function selectedTransportFixture(t:TestContext, startRoutes?: import('../src/web/v1/improve-control-room-loop-adapter').LoopProviderRouteResolutionV1){
+async function selectedTransportFixture(t:TestContext, startRoutes?: import('../src/web/v1/improve-control-room-loop-adapter').LoopProviderRouteResolutionV1, options: { onEncode?(): void; timeoutMs?: number } = {}){
   const f=await checkerFixture(t);await f.adapter.close();
   await mkdir(join(f.root,'roster'),{mode:0o700});
   const roster='synthetic transport roster\n',health={schema_version:1 as const,checked_at:new Date().toISOString(),entries:[{model:'fixture',route:'fixture',available:true}]};
   await writeFile(join(f.root,'roster/roster-export.tsv'),roster,{mode:0o600});
   await writeFile(f.configuration.availabilityFile,JSON.stringify(health),{mode:0o600});
   await chmod(f.configuration.availabilityFile,0o600);
-  const script=String.raw`import sys,json,hashlib,time
+  const script=String.raw`import sys,json,hashlib,time,os,signal
 from pathlib import Path
 root=Path(__file__).resolve().parents[3]
 a=sys.argv[1:]
@@ -653,7 +653,8 @@ s=Path(a[a.index('--settings')+1]).read_bytes()
 b=json.loads(Path(a[a.index('--selection-snapshot')+1]).read_text())
 c=json.loads(Path(a[a.index('--selection-context')+1]).read_text())
 h=json.loads(Path(a[a.index('--availability')+1]).read_text())
-with (root/'trace.jsonl').open('a') as f:f.write(json.dumps(dict(args=a,context=c,health=h,settingsText=s.decode()))+'\n')
+with (root/'trace.jsonl').open('a') as f:f.write(json.dumps(dict(args=a,context=c,health=h,settingsText=s.decode(),pid=os.getpid()))+'\n')
+if json.loads(s).get('ignoreTerm'):signal.signal(signal.SIGTERM,signal.SIG_IGN)
 if json.loads(s).get('hold'):time.sleep(10)
 C=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
 H=lambda v:hashlib.sha256(v).hexdigest()
@@ -671,11 +672,11 @@ print(json.dumps(dict(eligible=True,reasons=[],projection=p,snapshot=snap)))
   await writeFile(f.configuration.toolingManifest,manifest);
   const toolingRevision='sha256:'+sha(manifest),schemaDigest='sha256:'+loopByteHashV1(await readFile(join(f.root,'tools/loop/bridge/selection-schema.json')));
   const capability={schemaVersion:1 as const,revision:'b8-selection-review-only/1' as const,schemaDigest,
-    encodeContext(value:unknown){return canonicalJson(value);},decodeResult(value:any,pins:{settingsSha256:string}){
+    encodeContext(value:unknown){options.onEncode?.();return canonicalJson(value);},decodeResult(value:any,pins:{settingsSha256:string}){
       const {lineupDigest,...rest}=value.projection;
       assert.equal(lineupDigest,sha(canonicalJson({settingsSha256:pins.settingsSha256,snapshot:value.snapshot,projection:rest})));return value;
     }};
-  const adapter=createImproveControlRoomLoopAdapterV1({...f.configuration,toolingRevision,
+  const adapter=createImproveControlRoomLoopAdapterV1({...f.configuration,toolingRevision,timeoutMs:options.timeoutMs ?? 1000,
     entrypointSha256:sha(script),availabilitySha256:sha(JSON.stringify(health)),
     contract:{...f.configuration.contract,lineage:{...f.configuration.contract.lineage,toolingRevision},selectionProjection:capability,
       qualifiedOperations:startRoutes ? ['intake','start'] : ['intake'],admissionExpectation:()=>({}),
@@ -912,4 +913,77 @@ for blocked in (False,True):
     env:{PATH:'/usr/bin:/bin',TMPDIR:f.root,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1',PYTHONDONTWRITEBYTECODE:'1',NODE_ENV:'test'}});
   assert.match(stdout,/actual Start final-builder-family refusal=LINEUP_INELIGIBLE/);
   assert.match(stdout,/signed_bytes_equal=true/);console.log(stdout.trim());
+});
+
+function admissionContext(f: Awaited<ReturnType<typeof selectedTransportFixture>>, text: string) {
+  return { mode: 'admission' as const, commandId: 'loop-command:'+'c'.repeat(32), binding: {
+    schemaVersion: 1 as const, body: { description: 'fixture' }, localVersion: 1, adapterId: f.adapter.adapterId,
+    loopRunId: 'fixture-run', toolingRevision: f.toolingRevision, a2SchemaVersion: 1 as const, schemaDigest: f.adapter.schemaDigest,
+    requestSha256: sha('fixture'), settingsSha256: sha(text), runLinkId: null, authorizationId: null,
+    inputVersion: null, expectedRevision: null, evidence: null,
+  } };
+}
+
+for (const [window, preparation, expected] of [[5000,200,3800],[1500,100,400],[1100,50,50]]) {
+  test(`U81-B1a admission child single reserve W=${window} preparation=${preparation}`, async t => {
+    let mono=0;
+    const f=await selectedTransportFixture(t,undefined,{timeoutMs:5000,onEncode(){mono=preparation;}});
+    t.mock.method(performance,'now',()=>mono);
+    // Arithmetic uses controlled time; Python startup is not required to fit 50 host milliseconds.
+    t.mock.timers.enable({apis:['setTimeout']});
+    const timers: number[]=[]; const original=setTimeout;
+    t.mock.method(globalThis,'setTimeout',((fn: (...args:any[])=>void,ms?:number,...args:any[])=>{
+      timers.push(ms!); return original(fn,ms,...args);
+    }) as typeof setTimeout);
+    const result=await f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:new AbortController().signal,timeoutMs:window});
+    assert.equal(result.eligible,true);
+    assert.equal(timers[0],expected,'child receives remaining-to-deadline minus exactly one reserve');
+    assert.equal((await f.traces()).length,1);assert.deepEqual(await readdir(join(f.root,'work')),[]);
+  });
+}
+
+for (const [window, preparation] of [[1000,0],[5000,4000],[1500,500]]) {
+  test(`U81-B1a exhausted preparation starts no child W=${window} preparation=${preparation}`,async t=>{
+    let mono=0;
+    const f=await selectedTransportFixture(t,undefined,{onEncode(){mono=preparation;}});
+    t.mock.method(performance,'now',()=>mono);
+    let childTimers=0;const original=setTimeout;
+    t.mock.method(globalThis,'setTimeout',((fn: (...args:any[])=>void,ms?:number,...args:any[])=>{
+      childTimers++;return original(fn,ms,...args);
+    }) as typeof setTimeout);
+    await assert.rejects(f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:new AbortController().signal,timeoutMs:window}),/unavailable/);
+    assert.equal(childTimers,0,'cutoff refuses before child spawn');
+    assert.equal(await readFile(join(f.root,'trace.jsonl'),'utf8').catch(()=>''),'','cutoff refuses before child spawn');
+    assert.deepEqual(await readdir(join(f.root,'work')),[]);
+  });
+}
+
+test('U81-B1a per-call integer validation and abort refuse before preparation',async t=>{
+  let encoded=0;const f=await selectedTransportFixture(t,undefined,{onEncode(){encoded++;}});
+  for(const timeoutMs of [0,-1,0.5,NaN,Infinity])
+    await assert.rejects(f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:new AbortController().signal,timeoutMs}));
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:controller.signal,timeoutMs:5000}));
+  assert.equal(encoded,0,'invalid execution never serializes context or reads snapshot');
+  assert.deepEqual(await readdir(join(f.root,'work')),[]);
+  assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,timeoutMs:99}),/unavailable/,'legacy configuration floor stays 100 ms');
+});
+
+test('U81-B1a admission timeout kills TERM-ignoring checker, reaps and cleans before settling',async t=>{
+  const f=await selectedTransportFixture(t),text='{"hold":true,"ignoreTerm":true}';
+  await assert.rejects(f.adapter.checkSettings!(text,admissionContext(f,text),{signal:new AbortController().signal,timeoutMs:1500}));
+  const traces=await f.traces();assert.equal(traces.length,1);
+  assert.throws(()=>process.kill(traces[0].pid,0),{code:'ESRCH'},'checker is reaped before rejection');
+  assert.deepEqual(await readdir(join(f.root,'work')),[]);
+});
+
+test('U81-B1a policy forwarding deducts elapsed time without a second reserve',async t=>{
+  const f=await taskFixture();t.after(()=>f.db.close());let mono=0,received=0;
+  t.mock.method(performance,'now',()=>mono);
+  const signal=new AbortController().signal;
+  const policy=new LoopPolicyServiceV1(f.client,scope,{settingsText:'{}',get checkSettings(){mono+=200;return async (_text: string, _context?: import('../src/web/v1/loop-policy-service').LoopSelectionCheckContextV1, execution?: import('../src/web/v1/loop-policy-service').LoopSelectionCheckExecutionV1)=>{
+    received=execution!.timeoutMs;assert.equal(execution!.signal,signal);return {eligible:true,reasons:[]};
+  };}});
+  await policy.checkWith('{}',{mode:'preview',sameFamilyIntent:false},{signal,timeoutMs:4000});
+  assert.equal(received,3800,'forwarding time reduces allowance; no reserve is subtracted here');
 });

@@ -737,7 +737,8 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       || selectionDispatch.commandId !== commandId || selectionDispatch.bindingDigest !== sha256Digest(binding))) throw unavailable("selection_validation_failed");
     if (selectionDispatch) {
       if (!/^[a-f0-9]{64}$/.test(selectionDispatch.lineupDigest)) throw unavailable("selection_validation_failed");
-      selectionSnapshotSchemaV1.parse(selectionDispatch.snapshot); validateSelectionPins();
+      if (!selectionSnapshotSchemaV1.safeParse(selectionDispatch.snapshot).success) throw unavailable("selection_validation_failed");
+      validateSelectionPins();
     }
     validate(operation !== "stop"); beforeSpawn();
     const run = runId(binding.loopRunId);
@@ -925,19 +926,27 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
   /** Selected checks copy the clean producer bundle and use the pinned entrypoint.
    * Omitted context preserves the legacy direct checker. */
   function checkSettings(text: string, context?: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> {
+    // Capture entry before validation/serialization: preparation consumes this call's allowance.
+    const started = performance.now();
     if (closing) return Promise.reject(unavailable("adapter_closing"));
     parseLoopSettingsV1(text); validate(false);
     const crScript = checkedPath(join(toolsLoop, "cr.py"), c.configRoot);
     const selected = context !== undefined;
     const operation = (async () => {
-      if (execution && (!Number.isFinite(execution.timeoutMs) || execution.timeoutMs <= 0 || execution.signal.aborted)) throw unavailable("selection_validation_failed");
-      const started = performance.now(), allowance = execution?.timeoutMs ?? timeoutMs;
-      const remaining = () => allowance - (performance.now() - started);
+      if (context?.mode === "admission" && !execution
+        || execution && (!Number.isSafeInteger(execution.timeoutMs) || execution.timeoutMs <= 0 || execution.signal.aborted))
+        throw unavailable("selection_validation_failed");
+      const allowance = execution?.timeoutMs ?? timeoutMs;
+      // timeoutMs measures to D. Admission subtracts its one cleanup/commit reserve here only.
+      const reserve = context?.mode === "admission" ? 1000 : 0;
+      const remaining = () => allowance - (performance.now() - started) - reserve;
+      if (remaining() <= 0) throw unavailable("selection_validation_failed");
       let encodedContext: string | undefined, bundleText: string | undefined, healthText: string | undefined;
       let attested: ReturnType<typeof selectionSnapshotFromBundleV1> | undefined;
       if (selected) {
         validateSelectionPins();
         encodedContext = selectionProjection!.encodeContext(context!);
+        if (execution?.signal.aborted || remaining() <= 0) throw unavailable("selection_validation_failed");
         if (typeof encodedContext !== "string" || Buffer.byteLength(encodedContext) > 131072) throw unavailable("selection_validation_failed");
         if (context!.mode === "admission" && (context!.binding.toolingRevision !== c.toolingRevision
           || context!.binding.settingsSha256 !== loopByteHashV1(text))) throw unavailable("selection_validation_failed");
@@ -953,14 +962,18 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       try {
         checkedPath(directory, c.workRoot, true);
         if ((lstatSync(directory).mode & 0o777) !== 0o700) throw unavailable("selection_validation_failed");
-        const write = async (name: string, value: string) => { const file = join(directory, name), handle = await open(file, "wx", 0o600);
-          try { await handle.writeFile(value, "utf8"); } finally { await handle.close(); } return file; };
+        const write = async (name: string, value: string) => {
+          if (execution?.signal.aborted || remaining() <= 0) throw unavailable("selection_validation_failed");
+          const file = join(directory, name), handle = await open(file, "wx", 0o600);
+          try { await handle.writeFile(value, "utf8"); } finally { await handle.close(); } return file;
+        };
         const file = await write("settings.json", text);
         const args = ["-B", selected ? c.entrypoint : crScript, "check", "lineup", "--settings", file,
           "--availability", selected ? await write("availability.json", healthText!) : c.availabilityFile, "--json"];
         if (selected) args.push("--selection-context", await write("context.json", encodedContext!), "--selection-snapshot", await write("snapshot.json", bundleText!));
-        if (closing || execution?.signal.aborted || remaining() <= 0) throw unavailable("selection_validation_failed");
         validate(false); if (selected) validateSelectionPins();
+        const childTimeout = Math.min(timeoutMs, Math.floor(remaining()));
+        if (closing || execution?.signal.aborted || childTimeout <= 0) throw unavailable("selection_validation_failed");
         return await new Promise<LoopPolicyCheckWithV1>((fulfill, reject) => {
           const child = spawn(c.interpreter, args, { cwd: c.cwd, shell: false,
             env: { NODE_ENV: "production", LANG: "C.UTF-8", LC_ALL: "C.UTF-8",
@@ -970,7 +983,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
           const output: Buffer[] = [];
           let bytes = 0, failed = false, killTimer: ReturnType<typeof setTimeout> | undefined;
           const stop = () => { failed = true; child.kill("SIGTERM"); killTimer ??= setTimeout(() => child.kill("SIGKILL"), 1000); };
-          const timer = setTimeout(stop, Math.max(1, remaining()));
+          const timer = setTimeout(stop, childTimeout);
           execution?.signal.addEventListener("abort", stop, { once: true }); if (execution?.signal.aborted) stop();
           child.stdout.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); else output.push(Buffer.from(chunk)); });
           child.stderr.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) stop(); });
@@ -1018,6 +1031,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
               };
               inspect(result);
               if (result.reasons.some(reason => !/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(reason.code))) throw unavailable("selection_validation_failed");
+              if (execution?.signal.aborted || remaining() <= 0) throw unavailable("selection_validation_failed");
               fulfill(result);
             } catch { reject(unavailable("settings_check_failed")); }
           });

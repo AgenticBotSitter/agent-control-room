@@ -100,7 +100,7 @@ finally:s.doCleanups()
   const durations:number[]=[];
   for(let i=1;i<=30;i++)await t.test('stable admission '+String(i).padStart(2,'0'),async()=>{
     const frozenMono=performance.now(),frozenWall=Date.now(),checked=await coordinator.capture();
-    const value=await adapter.checkSettings!(settingsText,{mode:'admission',binding:staged.binding,commandId:'loop-command:'+i.toString(16).padStart(32,'0')},{signal:new AbortController().signal,timeoutMs:Math.max(1,4000-(performance.now()-frozenMono))});
+    const value=await adapter.checkSettings!(settingsText,{mode:'admission',binding:staged.binding,commandId:'loop-command:'+i.toString(16).padStart(32,'0')},{signal:new AbortController().signal,timeoutMs:Math.max(1,Math.floor(5000-(performance.now()-frozenMono)))});
     assert.equal(value.eligible,true);assert.deepEqual(value.snapshot,checked);
     assert.equal((await readdir(join(root,'work'))).filter(n=>n.startsWith('policy-check-')).length,0,'owned checker directories removed');
     assert.ok(performance.now()-frozenMono<4000,'real preparation/check/decoding/cleanup strictly before W-1000');
