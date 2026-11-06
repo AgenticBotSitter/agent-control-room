@@ -27,14 +27,26 @@ import { voiceInputStateTextV1, voiceReadStateTextV1 } from "../../src/voice/v1/
  *   text alternatives, not colour- or icon-only signals.
  * - The surface grants no authority: it cannot approve, save, send or start
  *   anything. It only reports heard words for the caller to commit.
+ * - A caller may withdraw control availability with `controlsDisabled`. The
+ *   dictation and read-aloud buttons are then unavailable even when the
+ *   adapters report support, and any live engine is force-stopped. Turning
+ *   voice off entirely stays a separate action on the enable checkbox.
  */
-export function VoiceControlsSurface({ settings, recognition, synthesis, readContent, onTranscriptCommitted, onSettingsChange }: {
+export function VoiceControlsSurface({ settings, recognition, synthesis, readContent, onTranscriptCommitted, onSettingsChange, controlsDisabled = false }: {
   settings: VoiceSettingsV1;
   recognition: VoiceRecognitionAdapterV1;
   synthesis: VoiceSynthesisAdapterV1;
   readContent?: ReadAloudContentV1;
   onTranscriptCommitted?: (transcript: string) => void;
   onSettingsChange?: (next: VoiceSettingsV1) => void;
+  /**
+   * Optional control-availability gate. When true the dictation and
+   * read-aloud buttons are disabled even when the adapters report support,
+   * and an in-flight dictation or read-aloud is force-stopped without
+   * committing anything. Defaults to false, so every existing caller keeps
+   * the behaviour it had before this prop existed.
+   */
+  controlsDisabled?: boolean;
 }) {
   const [inputState, setInputState] = useState<VoiceInputStateV1>("idle");
   const [readState, setReadState] = useState<VoiceReadStateV1>("idle");
@@ -42,6 +54,8 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
   const seenIds = useRef<Set<string>>(new Set());
   const session = useRef(0);
   const wasEnabled = useRef(settings.enabled);
+  const wasControlsDisabled = useRef(controlsDisabled);
+  const enabledToreDown = useRef(false);
   const inputGroup = useRef<HTMLDivElement>(null);
   const startButton = useRef<HTMLButtonElement>(null);
   const stopButton = useRef<HTMLButtonElement>(null);
@@ -57,6 +71,7 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
 
   useLayoutEffect(() => {
     if (wasEnabled.current && !settings.enabled) {
+      enabledToreDown.current = true;
       session.current += 1;
       cleanupVoiceV1({
         stopRecognition: () => { try { recognitionRef.current.stop(); } catch { /* already stopped */ } },
@@ -68,6 +83,28 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
     }
     wasEnabled.current = settings.enabled;
   }, [settings.enabled]);
+
+  useLayoutEffect(() => {
+    if (!wasControlsDisabled.current && controlsDisabled && !enabledToreDown.current) {
+      const dictationActive = inputState === "listening" || inputState === "confirming";
+      const readActive = readState === "speaking";
+      if (dictationActive || readActive) {
+        // Same teardown the unmount path performs: stop both engines through
+        // the injected adapters and discard any heard-but-unconfirmed words.
+        // Nothing is committed: a control-availability change is not consent.
+        session.current += 1;
+        cleanupVoiceV1({
+          stopRecognition: () => { try { recognitionRef.current.stop(); } catch { /* already stopped */ } },
+          cancelSynthesis: () => { try { synthesisRef.current.cancel(); } catch { /* already idle */ } },
+        });
+        setInputState("idle"); setReadState("idle"); setHeard("");
+        seenIds.current.clear();
+        focusReplacement.current = false;
+      }
+    }
+    wasControlsDisabled.current = controlsDisabled;
+    enabledToreDown.current = false;
+  }, [controlsDisabled, inputState, readState]);
 
   useLayoutEffect(() => {
     if (!focusReplacement.current) return;
@@ -189,7 +226,7 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
         setInputState(heard.trim() ? "confirming" : "idle");
       }}>Stop listening</button>
     </> : <>
-      <button ref={startButton} type="button" onClick={startDictation} disabled={!recognitionSupported}>Start dictation</button>
+      <button ref={startButton} type="button" onClick={startDictation} disabled={!recognitionSupported || controlsDisabled}>Start dictation</button>
       {!recognitionSupported && <p data-field="voice-unsupported-note">Dictation needs a browser with speech recognition; this one has none.</p>}
     </>}
     </div>
@@ -198,7 +235,7 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
     <p data-field="voice-read-status" aria-live="polite">{voiceReadStateTextV1(readState)}</p>
     {readState === "speaking"
       ? <button type="button" onClick={stopReading}>Stop reading</button>
-      : <button type="button" onClick={startReading} disabled={!synthesisSupported}>Read aloud</button>}
+      : <button type="button" onClick={startReading} disabled={!synthesisSupported || controlsDisabled}>Read aloud</button>}
     {!synthesisSupported && <p data-field="voice-read-unsupported-note">Read-aloud needs a browser with speech synthesis; this one has none.</p>}
   </section>;
 }
