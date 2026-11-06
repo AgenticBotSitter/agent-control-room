@@ -776,3 +776,20 @@ test('U81-B D29 historical draft key cannot issue B8 provenance',async t=>{
   assert.deepEqual(await saved(),before);assert.equal(f.spawns,0);
   assert.equal((await desk.viewLoopDesk(f.identity,f.project.projectId)).loopRequests[0]!.requestId,old.request.requestId);
 });
+
+
+test('U81-B R11 migration header describes the admissions table', async () => {
+  const header = (await readFile('db/migrations/0316_control_loop_selection_acknowledgement.sql','utf8')).split('\n')[0]!;
+  assert.match(header, /admission provenance/);
+  assert.doesNotMatch(header, /no new tables/);
+});
+
+
+test('U81-B R11 migration explicitly locks sources before admission DDL and backfill', async () => {
+  const ddl = await readFile('db/migrations/0316_control_loop_selection_acknowledgement.sql','utf8');
+  const lock = ddl.indexOf('LOCK TABLE control_loop_policy_input_sources IN SHARE ROW EXCLUSIVE MODE;');
+  assert.ok(lock >= 0, 'explicit bounded source lock required');
+  assert.ok(ddl.indexOf("SET LOCAL lock_timeout = '1s'") < lock);
+  assert.ok(lock < ddl.indexOf('CREATE TABLE control_loop_policy_input_admissions'));
+  assert.ok(lock < ddl.indexOf('INSERT INTO control_loop_policy_input_admissions'));
+});

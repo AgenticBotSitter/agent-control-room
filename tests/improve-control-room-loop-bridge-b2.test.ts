@@ -695,3 +695,26 @@ for(const composition of ["hosted","local"] as const)test(`B2b ${composition} at
   }
 });
 
+
+
+test('U81-B R11 exact-target status failure gates the real adapter observation', async t => {
+  const f = await fixture(t), requestId = await f.intake();
+  await f.confirm(requestId);
+  const { LoopPolicyServiceV1 } = await import('../src/web/v1/loop-policy-service');
+  const scope = { tenantId: 'tenant:web', workspaceId: 'workspace:web' };
+  const policy = new LoopPolicyServiceV1(f.client, scope, f.raw, () => now);
+  // Inject only classification so this legacy real-engine fixture enters the B8
+  // projection branch. The adapter, signed claims, saved inputs and status are real.
+  // Its saved non-selection settings cannot supply a valid exact B8 target.
+  t.mock.method(policy, 'inputAdmissionKind', async () => 'product-b8' as const);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client, scope,
+    { integrityKey: KEY, adapter: f.raw, policy }, () => now);
+  const before = (await f.db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
+  const status = await bridge.status(f.identity, f.project.projectId, requestId);
+  assert.equal(status.engine.state, 'ready');
+  assert.equal(status.display.canStart, false);
+  assert.equal(status.selection, undefined);
+  assert.equal(status.decisions?.gate?.kind, 'blocked');
+  assert.equal((status.decisions?.gate as {code:string}).code, 'UNAVAILABLE');
+  assert.deepEqual((await f.db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows, before);
+});

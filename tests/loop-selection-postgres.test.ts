@@ -103,8 +103,55 @@ test('U81-B PG17 strict acknowledgement schema and production timestamp helper',
         await web.query('COMMIT');
       } finally { await web.query('ROLLBACK'); }
       const signedBefore=(await admin.query('SELECT * FROM control_loop_improvement_inputs ORDER BY request_id,version')).rows;
-      await down();await up();
-      assert.deepEqual((await admin.query('SELECT * FROM control_loop_improvement_inputs ORDER BY request_id,version')).rows,signedBefore);
+      // A native source writer arrives while 0316 is paused immediately before
+      // its backfill snapshot. Observe actual locks, not a timing-only sleep.
+      await web.query(`INSERT INTO control_loop_improvement_inputs SELECT tenant_id,project_id,owner_identity_id,request_id,3,description,request_sha256,settings_text,settings_sha256,'backfill-concurrent-source-0001',record_digest,auth_tag,created_at FROM control_loop_improvement_inputs WHERE request_id=$1 AND version=1`,[native]);
+      await down();
+      const backfillMigration = new Client(pg.admin()), writer = new Client(pg.connection('web'));
+      await backfillMigration.connect(); await writer.connect();
+      let applying: Promise<unknown> | undefined, writing: Promise<{error?:string}> | undefined;
+      const pauseKey = 3160316;
+      try {
+        await admin.query('SELECT pg_advisory_lock($1)',[pauseKey]);
+        const pid = (await backfillMigration.query('SELECT pg_backend_pid() pid')).rows[0].pid;
+        const writerPid = (await writer.query('SELECT pg_backend_pid() pid')).rows[0].pid;
+        await backfillMigration.query('BEGIN');await backfillMigration.query('SET LOCAL ROLE control_room_schema_owner');
+        const ddl = await readFile('db/migrations/0316_control_loop_selection_acknowledgement.sql','utf8');
+        applying = backfillMigration.query(ddl.replace('INSERT INTO control_loop_policy_input_admissions (',
+          `SELECT pg_advisory_xact_lock(${pauseKey});\nINSERT INTO control_loop_policy_input_admissions (`));
+        // Attach rejection handlers immediately; cleanup always joins both queries.
+        const applied = applying.then(()=>({}),error=>({error}));
+        const waitFor = async (sql:string, params:unknown[]) => {
+          const until = performance.now()+750;
+          while(performance.now()<until){
+            if((await admin.query(sql,params)).rows[0].ok)return true;
+            await new Promise(resolve=>setTimeout(resolve,5));
+          }
+          return false;
+        };
+        assert.equal(await waitFor("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted) ok",[pid]),true,'backfillMigration reached the backfill barrier');
+        writing = writer.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id) VALUES('tenant:selection',$1,3,$2,'{"project":0,"selection":0}',NULL)`,[native,hash])
+          .then(()=>({}),error=>({error:error.code}));
+        const blocked = await waitFor("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND relation='control_loop_policy_input_sources'::regclass AND NOT granted) ok",[writerPid]);
+        // Release before asserting so the red run cannot strand the backfillMigration.
+        await admin.query('SELECT pg_advisory_unlock($1)',[pauseKey]);
+        const outcome = await applied;
+        if('error' in outcome)throw outcome.error;
+        await backfillMigration.query('COMMIT');
+        const insert = await writing;
+        assert.equal(blocked,true,'concurrent source insert must wait behind the pre-backfill table lock');
+        assert.equal(insert.error,'23503','old source-only writer cannot commit after the 1:1 guard is installed');
+        await admin.query(await readFile('db/migrations/0317_control_loop_selection_acknowledgement_validate.sql','utf8'));
+        await admin.query((await readFile('db/roles/private_web_roles.sql','utf8')).replace(/CREATE ROLE control_room_private_web[^;]+;/,''));
+        assert.equal((await admin.query(`SELECT count(*)::int n FROM control_loop_policy_input_sources s LEFT JOIN control_loop_policy_input_admissions a USING(tenant_id,request_id,input_version) WHERE a.request_id IS NULL`)).rows[0].n,0);
+        console.log('RESULT: 0316 concurrent source writer blocked before backfill; source-only commit refused; 0317 validates with zero orphans');
+      } finally {
+        await admin.query('SELECT pg_advisory_unlock($1)',[pauseKey]);
+        await applying?.catch(()=>{});await backfillMigration.query('ROLLBACK');
+        await writing;await writer.end();await backfillMigration.end();
+      }
+      // The extra input is deliberately source-free; signed history is untouched.
+      assert.deepEqual((await admin.query('SELECT * FROM control_loop_improvement_inputs WHERE version<>3 ORDER BY request_id,version')).rows,signedBefore);
       assert.equal((await web.query('SELECT admission_kind FROM control_loop_policy_input_admissions WHERE request_id=$1 ORDER BY input_version',[native])).rows.map(row=>row.admission_kind).join(','),'native-p71,native-p71');
       assert.equal(await readPrivateWebSchemaDigest(web),measured);
       // Guard-off proof stays inside a rollback transaction: disabling the reverse FK admits an unpaired source.
@@ -112,8 +159,8 @@ test('U81-B PG17 strict acknowledgement schema and production timestamp helper',
       try {
         await admin.query('ALTER TABLE control_loop_policy_input_sources DROP CONSTRAINT control_loop_policy_input_sources_admission_fk');
         assert.equal((await admin.query(`SELECT count(*)::int n FROM pg_constraint WHERE conname='control_loop_policy_input_sources_admission_fk'`)).rows[0].n,0);
-        await admin.query(`INSERT INTO control_loop_improvement_inputs SELECT tenant_id,project_id,owner_identity_id,request_id,3,description,request_sha256,settings_text,settings_sha256,'guard-off-source-key-0001',record_digest,auth_tag,created_at FROM control_loop_improvement_inputs WHERE request_id=$1 AND version=1`,[native]);
-        await admin.query(`INSERT INTO control_loop_policy_input_sources SELECT tenant_id,request_id,3,defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources WHERE request_id=$1 AND input_version=1`,[native]);
+        await admin.query(`INSERT INTO control_loop_improvement_inputs SELECT tenant_id,project_id,owner_identity_id,request_id,4,description,request_sha256,settings_text,settings_sha256,'guard-off-source-key-0001',record_digest,auth_tag,created_at FROM control_loop_improvement_inputs WHERE request_id=$1 AND version=1`,[native]);
+        await admin.query(`INSERT INTO control_loop_policy_input_sources SELECT tenant_id,request_id,4,defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources WHERE request_id=$1 AND input_version=1`,[native]);
         await assert.rejects(assert.rejects(admin.query('SET CONSTRAINTS ALL IMMEDIATE'),{code:'23503'}),{code:'ERR_ASSERTION'},'source-only refusal assertion fails with reverse FK removed');
       } finally { await admin.query('ROLLBACK'); }
       await assert.rejects(pair(undefined,'immediate'),{code:'23503'},'restored reverse FK catches the orphan');
@@ -128,9 +175,9 @@ test('U81-B PG17 strict acknowledgement schema and production timestamp helper',
       await alterAndRollback(async()=>{
         await admin.query('ALTER TABLE control_loop_policy_input_admissions DROP CONSTRAINT control_loop_policy_input_admissions_kind_check');
         await admin.query(`UPDATE control_loop_policy_input_admissions SET admission_kind='unknown' WHERE false`);
-        await admin.query(`INSERT INTO control_loop_improvement_inputs SELECT tenant_id,project_id,owner_identity_id,request_id,3,description,request_sha256,settings_text,settings_sha256,'guard-off-kind-key-0001',record_digest,auth_tag,created_at FROM control_loop_improvement_inputs WHERE request_id=$1 AND version=1`,[native]);
-        await admin.query(`INSERT INTO control_loop_policy_input_sources SELECT tenant_id,request_id,3,defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources WHERE request_id=$1 AND input_version=1`,[native]);
-        await assert.rejects(assert.rejects(admin.query(`INSERT INTO control_loop_policy_input_admissions VALUES('tenant:selection',$1,3,'unknown')`,[native]),{code:'23514'}),{code:'ERR_ASSERTION'});
+        await admin.query(`INSERT INTO control_loop_improvement_inputs SELECT tenant_id,project_id,owner_identity_id,request_id,4,description,request_sha256,settings_text,settings_sha256,'guard-off-kind-key-0001',record_digest,auth_tag,created_at FROM control_loop_improvement_inputs WHERE request_id=$1 AND version=1`,[native]);
+        await admin.query(`INSERT INTO control_loop_policy_input_sources SELECT tenant_id,request_id,4,defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources WHERE request_id=$1 AND input_version=1`,[native]);
+        await assert.rejects(assert.rejects(admin.query(`INSERT INTO control_loop_policy_input_admissions VALUES('tenant:selection',$1,4,'unknown')`,[native]),{code:'23514'}),{code:'ERR_ASSERTION'});
         await admin.query('SET CONSTRAINTS ALL IMMEDIATE');
       });
       for(const operation of ['UPDATE','DELETE','TRUNCATE']) await alterAndRollback(async()=>{

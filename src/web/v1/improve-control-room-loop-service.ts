@@ -501,6 +501,7 @@ export class ImproveControlRoomLoopServiceV1 {
         identityVerified: current.progress.identityVerified === true && !!current.progress.observedModel, repairCount: current.progress.repairCount ?? null },
       attention, observedAt: new Date(this.clock()).toISOString() });
     let selection: LoopDecisionStatusV1["selection"];
+    let selectionUnavailable = provenance === "unavailable";
     if (provenance === "product-b8") {
       try {
         const target = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
@@ -511,11 +512,11 @@ export class ImproveControlRoomLoopServiceV1 {
         selection = { requestSha256: target.requestSha256, settingsSha256: target.settingsSha256,
           sameFamilyReview: target.sameFamilyReview, acceptanceCurrent: target.acceptanceCurrent };
         if (selection.sameFamilyReview && !selection.acceptanceCurrent) display.canStart = false;
-      } catch { display.canStart = false; }
+      } catch { selectionUnavailable = true; }
     }
-    if (provenance === "unavailable") display.canStart = false;
+    if (selectionUnavailable) display.canStart = false;
     const projected = loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display, ...(selection ? { selection } : {}),
-      decisions: loopImprovementDecisionsSchemaV1.parse(provenance === "unavailable" ? { gate: unavailableLoopGate(), observedAt: display.observedAt } : recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
+      decisions: loopImprovementDecisionsSchemaV1.parse(selectionUnavailable ? { gate: unavailableLoopGate(), observedAt: display.observedAt } : recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,

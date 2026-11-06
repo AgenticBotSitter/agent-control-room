@@ -1,6 +1,8 @@
--- Additive acknowledgement and admission provenance constraints; no new tables and no signed history rewrite.
+-- Additive acknowledgement constraints and a new admission provenance table; no signed history rewrite.
 SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
+-- Match rollback lock ordering: serialize source writers before command/admission DDL.
+LOCK TABLE control_loop_policy_input_sources IN SHARE ROW EXCLUSIVE MODE;
 CREATE FUNCTION control_loop_selection_ack_timestamp_v1(value text) RETURNS timestamptz
 LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = pg_catalog AS $$
 DECLARE parts text[]; parsed timestamptz;

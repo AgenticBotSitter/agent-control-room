@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "28557da16b18acb1c4cb00ad62bc61f35a2e28718a43de106e3a3bf8f1e97a03",
+  "digest": "a3d192c87fd6fedf65b0f8c589958b9c52c7add178152db2178320ee5853ef1d",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -1097,7 +1097,7 @@
     {
       "file": "db/migrations/0316_control_loop_selection_acknowledgement.sql",
       "order": 183,
-      "sha256": "7b08b31f141ae72749075aeb21c9e1ad15c6cfe5003a5296f4a29bad7dd3222c",
+      "sha256": "b81d4727d3d985dea93703a7544a310f178ca6c6913eec4c649ee899bb655a95",
       "kind": "migrate"
     },
     {
