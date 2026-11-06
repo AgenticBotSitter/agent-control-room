@@ -132,7 +132,15 @@ const MIGRATION = "0234_fleet_worker_claim_capacity.sql";
 // introduced as NOT VALID in 0305. On PostgreSQL 17, undoing 0308 and 0307
 // and validating the restored 0305 constraint recovers e07286aa... exactly.
 // Replaying 0307 and 0308 recovers the pin below; 0234's round trip is unchanged.
-const PRE_0234_DIGEST = "41d09ffffe474b6da71a6e9927586ec11d4be6e79912fcf2cc240b20933cb4be";
+// 14. B7's 0309-0315 add roster, policy and provider admission objects after
+// 0234. Measured on PostgreSQL 17: undoing only 0315 through 0309 after
+// 0234's down recovers 41d09fff... exactly; replaying the same seven migrations
+// restores this pin. The historical 0234 up/down round trip remains exact.
+// 15. U81-B's 0316/0317 add retained selection admission provenance and
+// acknowledgement constraints. Measured on PostgreSQL 17 after 0234 down:
+// removing only 0317 then 0316 recovers 0f975391... exactly; replaying both
+// restores this pin. The full schema still has 266 tables (265 without them).
+const PRE_0234_DIGEST = "97926a5542d454cd05824d72a99c0e402cbf44204a17122bda9c3242754d1d04";
 
 /** The digest reader wants a DatabaseClient; a `pg` client is one, thinly wrapped. */
 const facade = (client: Client): DatabaseClient => {

@@ -701,7 +701,7 @@ test("B5 consumed owner actions require the original replay key after a challeng
     requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 });
   s = await current();
   assert.equal(s.display.confirmationCurrent, true);
-  await check("start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId });
+  await check("start", { route: S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId: s.request.runLink!.runLinkId });
   s = await current(); assert.equal(s.display.canStart, false); assert.equal(s.display.startState, "started");
   assert.equal(await f.tick(), "question"); s = await current();
   await check("answer", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
