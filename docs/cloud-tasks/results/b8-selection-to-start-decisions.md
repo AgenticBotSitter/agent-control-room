@@ -183,4 +183,9 @@ U81-A accepted LOWs: one shared project-preview route regex and direct handler 4
 
 T-SNAPSHOT accepted LOWs: inode-swap tests retain the same nonce (and the original fence inode in the root-swap case), public file errors are sanitized while internal missing-file bootstrap stays intact, successful COMMIT followed by failed release reports database_outcome_uncertain and poisons custody, and the explicit real-tools script now uses the required anchored test name. The portable command uses the merged branch's exact host-case exclusions; neither inherited skip nor fixture counts are real-tools qualification. Native test timeout now measures the integer remaining-to-D allowance, without an extra reserve.
 
-Status: BLOCKED: U81-B1b integrated admission and U81-B2 SQL/PG remain unbuilt
+
+## D25 — U81-B round-3 spec/code audit stop
+
+The assigned predecessor is a33e097af351374b525160198f1729563afc9750. The round-3 brief supplies isolated PG ports, migration IDs 0316/0317 and cached Squawk, resolving those round-2 inputs. The pre-edit audit found §4.4 still states application/native-public table counts 263/264 and forbids incrementing them, while the assigned predecessor's fixture/candidate/desk assertions agree on 264/265. Per the brief and cr-build step 1, stop before dependent implementation; preserve all current pins and landed migrations. The lead must reconcile the reviewed §4.4 baseline with the assigned predecessor before B1b/B2 resumes. No migration ID is consumed and no admission change is implemented in this round.
+
+Status: BLOCKED: spec section 4.4 catalog baseline mismatch (263/264 versus predecessor 264/265)

@@ -172,3 +172,16 @@ Required PG17 snapshot test refuses before cluster startup because no lead-suppl
 Git staging exits 128 because index.lock creation is refused. No retry/escalation, new commit or push; the lead must commit the dirty candidate. HEAD remains the predecessor. Native host qualification is lead-owned after that commit. Current review LOW dispositions and remaining boundaries are recorded in D24 and the external build report.
 
 Status: BLOCKED: U81-B1b/B2 remainder, PG port range, uncached hygiene tool and git staging refusal
+
+
+## U81-B round 3 prerequisite audit — 2026-11-06T05:33:40.008390+00:00
+
+Predecessor: `a33e097af351374b525160198f1729563afc9750` on `cook/b8-selection-u81b`, clean before audit. B1b/B2 implementation stopped under the explicit spec/code mismatch rule before code or migrations were changed.
+
+Spec §4.4 (line 153) pins application/native-public tables to 263/264 and says not to increment those counts. Actual predecessor pins are application/native-public 264/265: `src/web/v1/private-fixture-preparation.ts:121`, `tests/improve-control-room-loop-candidate-postgres.test.ts:220,493`, `tests/improve-control-room-desk-postgres.test.ts:630,675`. A direct Python source audit parsed these constants, verified the desk counterparts, printed all four results and exited 2 with `RESULT: BLOCKED: spec section 4.4 catalog baseline disagrees with the assigned predecessor; no implementation authorized across mismatch`. This is a prerequisite audit, not executable red-first or live catalog evidence.
+
+Independent source-reference command: `rg -n 'fixture/application tables=|tables.length ===|assert.equal\(count,265\)|inherited fixture preparation measures|catalogCount, 264|beforeCatalog.length, 265|public_count=265' docs/cloud-tasks/results/b8-selection-to-start-spec.md src/web/v1/private-fixture-preparation.ts tests/improve-control-room-loop-candidate-postgres.test.ts tests/improve-control-room-desk-postgres.test.ts` — exit 0, confirms the mismatch. `git status --porcelain` initially empty; `git rev-parse HEAD` returned the predecessor above; `git branch --show-current` returned the expected branch.
+
+Lead inputs 60520–60539, migration IDs 0316/0317 and cached migration linter were supplied; they are not blockers in this round. Required implementation red/green, U81-B/B8 snapshot/B7 suites, PG17 production-role proofs, mutation lanes, migration lint and broad §9 checks: NOT RUN, because the explicit audit stop occurred first. Test counts: zero executed, no passing claim. No clusters, checkers, models, providers, workers or background processes started. Builder audit findings: HIGH 0 / MEDIUM 1 / LOW 0 (spec baseline mismatch). No independent code gate claimed. Full host gate remains lead-owned.
+
+Git staging: git add exited 128 because index.lock creation was refused (Operation not permitted); no commit/retry/escalation. Current HEAD remains a33e097af351374b525160198f1729563afc9750; lead commits the documentation changes. git diff --check passed (exit 0).
