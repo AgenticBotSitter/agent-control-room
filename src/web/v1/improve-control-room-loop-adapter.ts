@@ -230,7 +230,14 @@ export type LoopSelectionProjectionCapabilityV1 = Readonly<{ schemaVersion: 1; r
 export const loopIntakeCustodySchemaV1 = z.object({ tenantId: recoveryId, workspaceId: recoveryId,
   projectId: recoveryId, requestId: recoveryId, ownerIdentityId: recoveryId,
   localVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), settingsDigest: z.string().min(1).max(180) }).strict();
+export type LoopIntakeCustodyV1 = z.infer<typeof loopIntakeCustodySchemaV1>;
 export const loopOwnedIntakeBindingSchemaV1 = loopBridgeBindingSchemaV1.safeExtend(loopIntakeCustodySchemaV1.shape);
+const intakeOriginalBindingSchema = z.union([loopBridgeBindingSchemaV1, loopOwnedIntakeBindingSchemaV1]);
+function matchesIntakeCustody(binding: z.infer<typeof intakeOriginalBindingSchema>, custody: LoopIntakeCustodyV1) {
+  // Retained owned envelopes keep their original decoder; tools owns that legacy join.
+  if ('tenantId' in binding) return true;
+  return binding.localVersion === custody.localVersion && binding.settingsSha256 === custody.settingsDigest;
+}
 const intakeResultSchema = z.object({ launch_key: z.string().regex(/^[a-f0-9]{32}$/), step: z.number().int().positive(),
   job_id: z.string().min(1).max(240), ended: z.string().min(1).max(80).refine(v => Number.isFinite(Date.parse(v))),
   report_sha256: loopEngineStatusSchemaV1.shape.settingsSha256, proposal_sha256: loopEngineStatusSchemaV1.shape.settingsSha256,
@@ -238,16 +245,21 @@ const intakeResultSchema = z.object({ launch_key: z.string().regex(/^[a-f0-9]{32
 export const loopIntakeDriverBindingSchemaV1 = loopIntakeCustodySchemaV1.extend({ schemaVersion: z.literal(1),
   runLinkId: recoveryId, run: loopImprovementRunIdentitySchemaV1, expectedRevision: revision, inputVersion: z.number().int().positive(),
   requestSha256: loopEngineStatusSchemaV1.shape.settingsSha256, settingsSha256: loopEngineStatusSchemaV1.shape.settingsSha256,
-  intakeCommandId: commandIdentity.shape.commandId, intakeBinding: loopOwnedIntakeBindingSchemaV1,
-  intakeBindingDigest: digest, completedResult: intakeResultSchema }).strict();
+  intakeCommandId: commandIdentity.shape.commandId, intakeBinding: intakeOriginalBindingSchema,
+  intakeBindingDigest: digest, completedResult: intakeResultSchema }).strict()
+  .refine(b => 'tenantId' in b.intakeBinding || matchesIntakeCustody(b.intakeBinding,b) && sha256Digest(b.intakeBinding) === b.intakeBindingDigest
+    && b.intakeBinding.loopRunId === b.run.loopRunId && b.intakeBinding.requestSha256 === b.requestSha256
+    && b.intakeBinding.settingsSha256 === b.settingsSha256 && b.localVersion === b.intakeBinding.localVersion);
 export type LoopIntakeDriverBindingV1 = z.infer<typeof loopIntakeDriverBindingSchemaV1>;
 export const loopIntakeDriverReceiptSchemaV1 = z.object({ command_id: commandIdentity.shape.commandId, binding_digest: digest,
-  completed_result: intakeResultSchema, intake_command_id: commandIdentity.shape.commandId, intake_binding: loopOwnedIntakeBindingSchemaV1,
+  completed_result: intakeResultSchema, intake_command_id: commandIdentity.shape.commandId, intake_binding: intakeOriginalBindingSchema,
   custody: loopIntakeCustodySchemaV1.extend({runLinkId:recoveryId}),
   request_sha256: loopEngineStatusSchemaV1.shape.settingsSha256, settings_sha256: loopEngineStatusSchemaV1.shape.settingsSha256,
   input_version: z.number().int().positive(), expected_revision: revision, revision,
   at: z.string().min(1).max(80).refine(v => Number.isFinite(Date.parse(v))),
-  state: z.literal("waiting_owner"), attention: z.literal("REQUEST_UNCONFIRMED") }).strict();
+  state: z.literal("waiting_owner"), attention: z.literal("REQUEST_UNCONFIRMED") }).strict()
+  .refine(r => 'tenantId' in r.intake_binding || matchesIntakeCustody(r.intake_binding,r.custody)
+    && r.request_sha256 === r.intake_binding.requestSha256 && r.settings_sha256 === r.intake_binding.settingsSha256);
 export const loopIntakeDriverObservationSchemaV1 = z.object({ schemaVersion:z.literal(1),run:loopImprovementRunIdentitySchemaV1,
   revision,inputVersion:z.number().int().positive(),requestSha256:loopEngineStatusSchemaV1.shape.settingsSha256,
   settingsSha256:loopEngineStatusSchemaV1.shape.settingsSha256,mode:z.enum(["unavailable","completed","advanced"]),
@@ -297,7 +309,7 @@ export type LoopAdapterContractV1 = {
   /** Builds A2's lock-checked expectation from the exact cached observation.
    * No refresh or invocation belongs in this installation-owned callback. */
   admissionExpectation?: (binding: Readonly<LoopBridgeBindingV1>, context: Readonly<{
-    operation: "intake" | "confirm" | "start" | "approve" | "answer"; commandId: string; selectionDispatch?: LoopSelectionDispatchV1;
+    operation: "intake" | "confirm" | "start" | "approve" | "answer"; commandId: string; selectionDispatch?: LoopSelectionDispatchV1; intakeCustody?: LoopIntakeCustodyV1;
   }>) => unknown | Promise<unknown>;
   qualifiedOperations: readonly LoopBridgeOperationV1[];
 };
@@ -323,7 +335,7 @@ export interface LoopAdapterV1 {
   readonly selectionSources?: LoopSelectionSourceFilesV1;
   checkSettings?(text: string, context?: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1>;
   reserveRun(): string; available(operation: LoopBridgeOperationV1): boolean;
-  intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string, selectionDispatch?: LoopSelectionDispatchV1): Promise<LoopEngineStatusV1>;
+  intake(commandId: string, binding: LoopBridgeBindingV1, text: string, beforeSpawn: () => void, settingsText?: string, selectionDispatch?: LoopSelectionDispatchV1, intakeCustody?: LoopIntakeCustodyV1): Promise<LoopEngineStatusV1>;
   confirmRequest(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string, selectionDispatch?: LoopSelectionDispatchV1): Promise<LoopEngineStatusV1>;
   start(commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, settingsText?: string, admission?:LoopStartAdmissionV1, selectionDispatch?: LoopSelectionDispatchV1): Promise<LoopEngineStatusV1>;
   status(run: string): Promise<LoopEngineStatusV1>;
@@ -730,9 +742,12 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     return !closing && c.contract.qualifiedOperations.includes(operation)
       && (operation === "stop" || typeof c.contract.admissionExpectation === "function");
   };
-  async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string, signedSettingsText?: string, selectionDispatch?: LoopSelectionDispatchV1) {
+  async function invoke(operation: LoopBridgeOperationV1, commandId: string, binding: LoopBridgeBindingV1, beforeSpawn: () => void, text?: string, signedSettingsText?: string, selectionDispatch?: LoopSelectionDispatchV1, intakeCustody?: LoopIntakeCustodyV1) {
     if (!available(operation) || binding.adapterId !== c.adapterId || binding.toolingRevision !== c.toolingRevision
       || binding.schemaDigest !== c.contract.schemaDigest || operation !== "stop" && (typeof signedSettingsText !== "string" || loopByteHashV1(signedSettingsText) !== binding.settingsSha256)) throw unavailable("command_binding_mismatch");
+    if (intakeCustody !== undefined && (operation !== "intake" || !loopIntakeCustodySchemaV1.safeParse(intakeCustody).success
+      || !matchesIntakeCustody(binding, intakeCustody))) throw unavailable("intake_custody_mismatch");
+    if (operation === "intake" && intakeCapability && intakeCustody === undefined) throw unavailable("intake_custody_required");
     if (selectionDispatch && (!selectionProjection || !["intake", "confirm", "start"].includes(operation)
       || selectionDispatch.commandId !== commandId || selectionDispatch.bindingDigest !== sha256Digest(binding))) throw unavailable("selection_validation_failed");
     if (selectionDispatch) {
@@ -746,7 +761,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
       let expectation: string | undefined;
       if (operation !== "stop") {
         const expected = await c.contract.admissionExpectation!(Object.freeze({ ...binding, body: Object.freeze({ ...binding.body }) }),
-          Object.freeze({ operation, commandId, ...(selectionDispatch ? { selectionDispatch } : {}) }));
+          Object.freeze({ operation, commandId, ...(selectionDispatch ? { selectionDispatch } : {}), ...(intakeCustody ? { intakeCustody: Object.freeze({...intakeCustody}) } : {}) }));
         beforeSpawn();
         expectation = await commandFile(commandId, "expect.json", canonicalJson(expected));
       }
@@ -1113,7 +1128,7 @@ export function createImproveControlRoomLoopAdapterV1(input: LoopAdapterConfigur
     ...(finalization ? { finalization } : {}),
     ...(intakeDriver ? { intakeDriver } : {}),
     ...(monitor ? { monitoringTick: monitor.tick } : {}),
-    intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText, selectionDispatch?: LoopSelectionDispatchV1) => invoke("intake", id, b, fence, text, settings, selectionDispatch),
+    intake: (id: string, b: LoopBridgeBindingV1, text: string, fence: () => void, settings: string = settingsText, selectionDispatch?: LoopSelectionDispatchV1, intakeCustody?: LoopIntakeCustodyV1) => invoke("intake", id, b, fence, text, settings, selectionDispatch, intakeCustody),
     confirmRequest: (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText, selectionDispatch?: LoopSelectionDispatchV1) => invoke("confirm", id, b, fence, undefined, settings, selectionDispatch),
     start: async (id: string, b: LoopBridgeBindingV1, fence: () => void, settings: string = settingsText, admission?:LoopStartAdmissionV1, selectionDispatch?: LoopSelectionDispatchV1) => {
       if (!providerRoutes || !admission || admission.settingsSha256 !== b.settingsSha256 || loopByteHashV1(settings) !== b.settingsSha256)

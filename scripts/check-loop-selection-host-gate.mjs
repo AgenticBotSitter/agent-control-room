@@ -14,7 +14,9 @@ export const b8U81CasesV1=Object.freeze(['ordinary eligible','bound acknowledged
   'stable admission 11','stable admission 12','stable admission 13','stable admission 14','stable admission 15',
   'stable admission 16','stable admission 17','stable admission 18','stable admission 19','stable admission 20',
   'stable admission 21','stable admission 22','stable admission 23','stable admission 24','stable admission 25',
-  'stable admission 26','stable admission 27','stable admission 28','stable admission 29','stable admission 30']);
+  'stable admission 26','stable admission 27','stable admission 28','stable admission 29','stable admission 30',
+  'custody unchanged checked binding and receipt','custody missing changed members refuse before invocation',
+  'custody locked CLI completed intake durable replay']);
 const need=(condition,message)=>{if(!condition)throw Error('B8 host gate: '+message);};
 const hash=raw=>createHash('sha256').update(raw).digest('hex');
 const decode=raw=>parseStrictJsonV1(raw,{maxBytes:16*1048576});

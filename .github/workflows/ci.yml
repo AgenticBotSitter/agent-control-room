@@ -75,6 +75,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prove selection intake custody guards
+        timeout-minutes: 12
+        run: pnpm run test:loop-selection-mutations
       - name: Calculate affected-test requirements
         id: selection
         env:

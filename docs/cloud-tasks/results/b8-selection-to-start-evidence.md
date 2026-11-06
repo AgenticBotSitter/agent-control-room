@@ -180,4 +180,15 @@ D27 is a reproduced conditional integration blocker. Service lines 111–115 add
 
 Temporary implementation experiments included one intended red R2 failure, seven passing scripted admission tests and one passing native PG17 SQL matrix with unchanged 265 native tables, timestamp/optional-record/freshness/delayed/copied-record/down/re-up/rollback checks. These experiments were removed at the mandatory contract stop; they are not tests of the final tree and do not establish B1b/B2 completion. The assigned external round-4 report contains exact commands, intermediate failures, cleanup and scratch evidence. No admission, SQL-backed completion, actual worker or selection-to-start green claim.
 
-Status: BLOCKED: checked selection binding conflicts with existing report-only intake custody transport
+
+## U81-B round 5 — retained product custody transport; D28 stop
+
+Ground: 0d3269bad6a263db5e1cccb25f304b65b6d012f2, tools ec2359ece1921a7510ce191cc078ab5e7e3175cb. No commit/push; Git add exited 128 on index.lock creation. Lead owns replacement receipt/full host gate.
+
+Red-first existing service/adapter tests: corrected-fixture run exited 1, 2 tests / 0 pass / 2 fail / 0 skip: dispatch added custody fields to the signed binding, and configured intakeDriver accepted missing custody. Retained-tree green: focused recovery/custody 5/5; native real selection 42/42, zero skips; product TAP validator accepts all 41 named children and proves the original 38 are an unchanged prefix. Delta +3: unchanged checked-binding/receipt with sibling, missing/changed custody refusal, locked-CLI completed-intake durable replay. Two custody guard mutations fail the intended assertions and restore green (3 TAP tests total). TypeScript production/demo and lane reachability pass. Detailed commands, failed experiments, actual exits and cleanup are in BUILD-B8-SELECTION-U81B-R5.md.
+
+Next-door legacy recovery and the B5/B7 signed-settings decoder remain covered. Pure grant-scope probe: unchanged predecessor role files accepted, then required timestamp-helper EXECUTE alone refused by desiredMacGrantsV1. Native product upgrade cases independently reproduce upgrade_grant_source_refused. Section 4.4 does not authorize the required Mac upgrade allowlist file; mandatory stop D28 applies. No new function/SQL/grant/pin is retained. Earlier draft 17/17 admission, native SQL and 20-caller successes are experimental only and do not qualify this final transport slice.
+
+Required full U81-B lanes remain incomplete/not run after D28. Missing cached Squawk prevents positive offline lint/hygiene evidence; no download attempted. Boundary suite failure remains unqualified. No independent code/attack/CI review or Linux parity claimed. No actual model/provider/worker qualification. Owned PG helper cleanup and foreground process teardown are recorded externally.
+
+Status: BLOCKED: section 4.4 omits required Mac upgrade grant allowlist file; B1b/B2 withheld

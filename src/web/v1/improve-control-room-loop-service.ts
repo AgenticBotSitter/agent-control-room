@@ -114,6 +114,10 @@ export class ImproveControlRoomLoopServiceV1 {
     return loopOwnedIntakeBindingSchemaV1.parse({...claim.binding,...this.scope,projectId:claim.project_id,
       requestId:claim.request_id,ownerIdentityId:claim.owner_identity_id,settingsDigest:claim.binding.settingsSha256});
   }
+  #intakeCustody(claim: Row) {
+    return loopIntakeCustodySchemaV1.parse({...this.scope, projectId:claim.project_id, requestId:claim.request_id,
+      ownerIdentityId:claim.owner_identity_id, localVersion:claim.binding.localVersion, settingsDigest:claim.binding.settingsSha256});
+  }
   #pins(binding: LoopBridgeBindingV1, operation: LoopBridgeOperationV1) {
     if (binding.adapterId !== this.#adapter.adapterId || binding.toolingRevision !== this.#adapter.toolingRevision
       || binding.schemaDigest !== this.#adapter.schemaDigest) throw unavailable();
@@ -295,16 +299,21 @@ export class ImproveControlRoomLoopServiceV1 {
       ||!local.link||local.authorization||snapshot.claims.some(row=>['confirm','start','stop'].includes(row.operation)))return blocked;
     const parsed=loopOwnedIntakeBindingSchemaV1.safeParse(this.#intakeEngineBinding(claim));
     if(!parsed.success)return blocked;
-    const b=parsed.data;
-    if(b.tenantId!==this.scope.tenantId||b.workspaceId!==this.scope.workspaceId||b.projectId!==target.projectId
-      ||b.requestId!==target.requestId||b.ownerIdentityId!==target.ownerIdentityId||b.localVersion!==Number(local.input.version)
+    const owned=parsed.data;
+    let b: LoopBridgeBindingV1 | typeof owned = claim.binding;
+    if(owned.tenantId!==this.scope.tenantId||owned.workspaceId!==this.scope.workspaceId||owned.projectId!==target.projectId
+      ||owned.requestId!==target.requestId||owned.ownerIdentityId!==target.ownerIdentityId||b.localVersion!==Number(local.input.version)
       ||b.requestSha256!==local.input.request_sha256||b.settingsSha256!==local.input.settings_sha256
-      ||b.settingsDigest!==b.settingsSha256||b.runLinkId!==null||b.authorizationId!==null
+      ||b.runLinkId!==null||b.authorizationId!==null
       ||b.loopRunId!==this.#run(local).loopRunId)return blocked;
     const status=await this.#adapter.status(b.loopRunId);
+    // Retained admissions used the owned envelope. Select that branch only
+    // from its exact accepted receipt; new admissions keep the signed binding.
+    if (!status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(b)&&r.state==='accepted')
+      && status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(owned)&&r.state==='accepted')) b=owned;
     if(status.state!=="draft"||status.confirmation||status.approval||status.question
       ||!equal(status.run,this.#run(local))||status.settingsSha256!==b.settingsSha256
-      ||status.settingsDigest!==b.settingsDigest||loopByteHashV1(status.description)!==b.requestSha256
+      ||status.settingsDigest!==b.settingsSha256||loopByteHashV1(status.description)!==b.requestSha256
       ||!status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(b)&&r.state==='accepted'))return blocked;
     const raw=await driver.inspect(b.loopRunId);
     if(Buffer.byteLength(JSON.stringify(raw),"utf8")>65536)throw unavailable();
@@ -315,7 +324,7 @@ export class ImproveControlRoomLoopServiceV1 {
     const receipt=o.receipt;
     const binding=loopIntakeDriverBindingSchemaV1.parse({schemaVersion:1,...loopIntakeCustodySchemaV1.parse({
       ...this.scope,projectId:target.projectId,requestId:target.requestId,ownerIdentityId:target.ownerIdentityId,
-      localVersion:b.localVersion,settingsDigest:b.settingsDigest}),runLinkId:local.link.id,run:status.run,
+      localVersion:b.localVersion,settingsDigest:b.settingsSha256}),runLinkId:local.link.id,run:status.run,
       expectedRevision:receipt?.expected_revision??o.revision,inputVersion:o.inputVersion,
       requestSha256:b.requestSha256,settingsSha256:b.settingsSha256,intakeCommandId:claim.command_id,
       intakeBinding:b,intakeBindingDigest:sha256Digest(b),completedResult:receipt?.completed_result??o.completedResult});
@@ -882,7 +891,7 @@ export class ImproveControlRoomLoopServiceV1 {
       const { claim } = admitted, b = claim.binding;
       let status: LoopEngineStatusV1;
       switch (operation) {
-        case "intake": status = await this.#adapter.intake(claim.command_id, this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : b, body.description as string, beforeSpawn, admitted.settingsText!); break;
+        case "intake": status = await this.#adapter.intake(claim.command_id, b, body.description as string, beforeSpawn, admitted.settingsText!, undefined, this.#adapter.intakeDriver ? this.#intakeCustody(claim) : undefined); break;
         case "confirm": status = await this.#adapter.confirmRequest(claim.command_id, b, beforeSpawn, admitted.settingsText!); break;
         case "start": status = await this.#adapter.start(claim.command_id, b, beforeSpawn, admitted.settingsText!, admitted.startAdmission); break;
         case "stop": status = await this.#adapter.stop(claim.command_id, b, beforeSpawn); break;
@@ -894,8 +903,8 @@ export class ImproveControlRoomLoopServiceV1 {
       if (databaseSqlStateIsAnyV1(error, ["40P01", "40001"])) throw error;
       const claim = admitted.claim;
       if (operation === "intake" && error instanceof LoopIntakeRefusalV1 && error.commandId === claim.command_id
-        && error.bindingDigest === sha256Digest(this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : claim.binding)
-        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : claim.binding, error.code)) {
+        && error.bindingDigest === sha256Digest(claim.binding)
+        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, claim.binding, error.code)) {
         try {
           this.#pins(claim.binding, "intake");
           const outcome = loopBridgeOutcomeSchemaV1.parse({ state: "refused", revision: 0,
