@@ -539,6 +539,8 @@ export class ImproveControlRoomDeskServiceV1 {
       const current = await this.#loopInput(tx, root);
       if (Number(current.version) !== value.expectedVersion || value.expectedVersion === Number.MAX_SAFE_INTEGER)
         throw new WebAccessError("conflict");
+      // Engine-linked copies cannot be changed in place. Stop and create a new request.
+      if (current.settings_text !== value.settingsText && await this.#loopLink(tx, root)) throw new WebAccessError("conflict");
       const input = await this.#insertLoop(tx, "inputs", { tenant_id: root.tenant_id, request_id: root.id,
         project_id: projectId, owner_identity_id: actor.id, version: value.expectedVersion + 1,
         description: value.description, settings_text: value.settingsText, request_sha256: rawLoopHash(value.description),
@@ -665,6 +667,9 @@ export class ImproveControlRoomDeskServiceV1 {
       lineage: ImproveControlRoomDeskServiceV1 }) => Promise<T>) {
     return (mutation ? this.#authority : this.#loopReadAuthority).authenticated(identity, async (tx, actor) => {
       actor.require(mutation ? "tasks.propose" : "projects.read", projectId, true, mutation ? "high" : "low");
+      // All loop mutations take the project mutex before the shared scope/head check.
+      if (mutation) await tx.query(`SELECT id FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3 FOR UPDATE`,
+        [this.scope.tenantId, this.scope.workspaceId, projectId]);
       await this.#requireSelfProject(tx, projectId);
       const localDb: DatabaseClient = {
         query: tx.query.bind(tx), transaction: callback => callback(tx),

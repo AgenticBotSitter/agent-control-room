@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "3448fa44ef3ad086d46139684ba078f6af8ad43f6eee18af1342f095ed126529",
-  "note": "Measured in PGlite and native PostgreSQL17 through 0307 review identity validation; the updater query produces the same digest. Compiled release pins must match this policy before release qualification."
+  "digest": "4a6a7d6b379607ba88adff4798e0aa0fb267ca03894a13b9cf7c65c0db2aaf78",
+  "note": "Through 0315 paid admission, including main candidate review identity. Web and updater queries agree in PGlite and native PostgreSQL 17."
 }
