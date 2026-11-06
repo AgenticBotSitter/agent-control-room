@@ -718,3 +718,111 @@ test('U81-B R11 exact-target status failure gates the real adapter observation',
   assert.equal((status.decisions?.gate as {code:string}).code, 'UNAVAILABLE');
   assert.deepEqual((await f.db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows, before);
 });
+
+async function d36Fixture(t: TestContext) {
+  const started=performance.now(),clock=()=>now+Math.floor(performance.now()-started);
+  const f=await taskFixture(clock);t.after(()=>f.db.close());
+  await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"templateId":"control-room"}'::jsonb) WHERE id=$1`,[f.project.projectId]);
+  const engine=await (await import('./helpers/loop-selection-start')).selectionStartAdapter(t);
+  const {LoopPolicyServiceV1}=await import('../src/web/v1/loop-policy-service');
+  let checks=0;
+  const scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const policy=new LoopPolicyServiceV1(f.client,scope,{settingsText:'{}',checkSettings:async()=>{
+    checks++;return {eligible:true,reasons:[],projection:engine.projection as any,snapshot:engine.snapshot};
+  }},clock);
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter:engine.adapter,policy,
+    selectionReady:()=>true,selectionGuard:{capture:async()=>engine.snapshot,assertCurrent:async()=>{}}},clock);
+  const intake=await bridge.intakeSelection(f.identity,f.project.projectId,{description:'SYNTHETIC D36 saved selection',
+    settingsEdits:JSON.stringify({...engine.selection,overrides:{reviewFamily:true,standardFinal:false}}),acceptSameFamilyRisk:true},'d36-intake-request-0001');
+  assert.equal(intake.state,'accepted');
+  const draft=await bridge.status(f.identity,f.project.projectId,intake.requestId);
+  const confirmed=await bridge.mutate(f.identity,f.project.projectId,intake.requestId,'confirm',{expectedVersion:1,expectedRevision:1,
+    requestSha256:draft.engine.requestSha256,settingsSha256:draft.engine.settingsSha256},'d36-confirm-request-0001');
+  assert.equal(confirmed.state,'accepted');
+  const status=await bridge.status(f.identity,f.project.projectId,intake.requestId);
+  const service=new ImproveControlRoomDeskServiceV1(f.client,scope,KEY,undefined,clock);
+  const handler=createImproveControlRoomHttpHandlerV1({origin,trust,service,clock,loopBridge:bridge});
+  const path=`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/${encodeURIComponent(intake.requestId)}`;
+  const body={expectedVersion:1,expectedRevision:status.engine.revision,runLinkId:status.request.runLink!.runLinkId};
+  const rows=async()=>{
+    const all:Record<string,unknown>={};
+    for(const table of ['control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_policy_input_sources','control_loop_policy_input_admissions',
+      'control_loop_improvement_commands','control_loop_policy_waivers','control_loop_improvement_run_links','control_loop_improvement_authorizations'])
+      all[table]=(await f.db.query(`SELECT * FROM ${table} ORDER BY 1,2,3`)).rows;
+    return all;
+  };
+  return {...f,...engine,bridge,handler,path,body,rows,requestId:intake.requestId,get checks(){return checks;}};
+}
+
+test('U81-B D36 failed Start leaves no committed claim through real adapter',async t=>{
+  const f=await d36Fixture(t),before=await f.rows(),checked=f.checks;
+  const {WebAccessError}=await import('../src/web/v1/access-verifier');
+  const refused=(e:unknown)=>{assert.ok(e instanceof WebAccessError);assert.equal(e.code,'start_deferred_u81s');return true;};
+  const post=async(body:unknown,key:string)=>{
+    const response=await f.handler(request(f.path+'/start','POST',body,key));
+    assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'start_deferred_u81s'});
+  };
+  for(let i=0;i<3;i++){
+    await post(f.body,'d36-start-repeated-0001');
+    await assert.rejects(f.bridge.mutate(f.identity,f.project.projectId,f.requestId,'start',f.body,'d36-start-direct-0001'),refused);
+  }
+  for(const extra of [{acceptSameFamilyRisk:true},{route:S4_FIXTURE_ROUTE},{route:S4_FIXTURE_ROUTE,paid:{capNanoUsd:'1000',optIn:true}}])
+    await post({...f.body,...extra},'d36-start-shape-'+randomBytes(8).toString('hex'));
+  await Promise.all(Array.from({length:20},(_,i)=>post(f.body,`d36-start-concurrent-${String(i).padStart(4,'0')}`)));
+  assert.deepEqual(await f.rows(),before);assert.equal(f.checks,checked,'Start never calls the checker');
+  assert.equal((await f.traces()).filter(r=>r.op==='start').length,0,'no synthetic Start invocation or worker');
+  // Real process composition must reach the same typed refusal even when its
+  // own source startup is unavailable. Start admission is never replaced.
+  const app=createPrivateWebProcess({origin,...trust,loadKeys:async()=>trust.keys,tenantId:'tenant:web',workspaceId:'workspace:web',clock:()=>now,
+    database:{client:f.client,close:async()=>{}},loopBridge:{integrityKey:KEY,adapter:f.adapter}});
+  try{const response=await app.handle(request(f.path+'/start','POST',f.body,'d36-factory-start-0001'),()=>new Response('unused'));
+    assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'start_deferred_u81s'});
+  }finally{await app.close();}
+  assert.deepEqual(await f.rows(),before);
+});
+
+test('U81-B D36 withheld Start status stays unavailable',async t=>{
+  const f=await d36Fixture(t),before=await f.rows();
+  const status=await f.bridge.status(f.identity,f.project.projectId,f.requestId);
+  assert.equal(status.display.canStart,false);assert.equal(status.display.attention?.code,'start_deferred_u81s');
+  assert.match(status.display.attention!.message,/subscription-launcher/);assert.ok(status.selection,'valid projection stays available');
+  assert.equal(status.display.confirmationCurrent,true);assert.equal(status.engine.state,'ready');
+  assert.deepEqual(await f.rows(),before);
+});
+
+test('U81-B D36 retained Start replay and Stop keep real adapter native history',async t=>{
+  const f=await fixture(t),id=await f.intake();await f.confirm(id);
+  const s=await f.get(id),body={route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:s.engine.revision,runLinkId:s.request.runLink!.runLinkId};
+  const first=await f.post(`${encodeURIComponent(id)}/start`,body,'d36-retained-start-0001');
+  assert.equal(first.status,202);const receipt=await first.json() as {commandId:string;state:string};assert.equal(receipt.state,'accepted');
+  const {LoopPolicyServiceV1}=await import('../src/web/v1/loop-policy-service');
+  const scope={tenantId:'tenant:web',workspaceId:'workspace:web'},policy=new LoopPolicyServiceV1(f.client,scope,f.raw,()=>now);
+  // Model an already committed pre-D36 B8 claim using valid signed history.
+  // Only retained-kind lookup is injected; replay and Stop use the real adapter.
+  t.mock.method(policy,'inputAdmissionKind',async()=>'product-b8' as const);
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:KEY,adapter:f.raw,policy},()=>now);
+  const starts=(await f.traces()).filter(r=>r.op==='start').length;
+  const replay=await bridge.mutate(f.identity,f.project.projectId,id,'start',body,'d36-retained-start-0001');
+  assert.equal(replay.commandId,receipt.commandId);assert.equal(replay.replayed,true);assert.equal(replay.state,'accepted');
+  assert.equal((await f.traces()).filter(r=>r.op==='start').length,starts);
+  const stopped=await bridge.mutate(f.identity,f.project.projectId,id,'stop',{runLinkId:body.runLinkId},'d36-retained-stop-0001');
+  assert.equal(stopped.state,'accepted');assert.equal((await f.raw.status(s.request.runLink!.loopRunId)).state,'stopped');
+});
+
+test('U81-B D36 Mac-local factory Start refuses before claims through real adapter',async t=>{
+  const f=await d36Fixture(t),before=await f.rows(),localOrigin='http://127.0.0.1:32123',ownerCode='synthetic-d36-local-owner-code';
+  const app=createMacLocalWebProcessV1({origin:localOrigin,workspaceId:'workspace:web',clock:()=>now,
+    localOwnerSession:{schema:LOCAL_OWNER_SESSION_PROFILE_V1,origin:localOrigin,tenantId:'tenant:web',provider:trust.issuer,subject:'test-owner',ownerCodeDigest:sha256Digest({ownerCode}),sessionSeconds:900},
+    database:{client:f.client,isAvailable:()=>true,close:async()=>{}},loopBridge:{integrityKey:KEY,adapter:f.adapter}});
+  try{
+    const call=(path:string,init:RequestInit)=>app.handle(new Request(localOrigin+path,init),()=>new Response('unused'));
+    const signin=await call('/api/v1/local-owner-session',{method:'POST',headers:{origin:localOrigin,'content-type':'application/json'},body:JSON.stringify({ownerCode})});
+    assert.equal(signin.status,201);
+    for(let i=0;i<3;i++){
+      const response=await call(f.path+'/start',{method:'POST',headers:{origin:localOrigin,cookie:signin.headers.get('set-cookie')!,
+        'content-type':'application/json','idempotency-key':'d36-mac-factory-start-0001'},body:JSON.stringify(f.body)});
+      assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'start_deferred_u81s'});
+    }
+    assert.deepEqual(await f.rows(),before);assert.equal((await f.traces()).filter(r=>r.op==='start').length,0);
+  }finally{await app.close();}
+});

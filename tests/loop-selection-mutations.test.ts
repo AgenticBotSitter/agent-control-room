@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 
 type Mutation={name:string;file:string;before:string;after:string;custom?:(source:string)=>string;test:string;title:string;assertion:string};
 const mutations:Mutation[]=[
+ {name:'D36 pre-claim Start refusal',file:'improve-control-room-loop-service.ts',before:'if (["start"].includes(operation)) throw new WebAccessError("start_deferred_u81s");',after:'void operation;',
+ test:'improve-control-room-loop-bridge-b2.test.ts',title:'U81-B D36 failed Start leaves no committed claim through real adapter',assertion:'202 !== 503'},
  {name:'accepted result provenance',file:'improve-control-room-loop-service.ts',before:'result?.result?.state === "accepted" && b.sameFamilyAcknowledgement',after:'b.sameFamilyAcknowledgement',
  test:'loop-selection.test.ts',title:'U81-B T7 claim without accepted result cannot supply copied acceptance',assertion:'Missing expected rejection'},
  {name:'copied input lineage',file:'improve-control-room-loop-service.ts',before:'&& b.loopRunId === binding.loopRunId && b.localVersion === binding.localVersion',after:'&& true',custom:s=>s.replace('&& b.loopRunId === binding.loopRunId && b.localVersion === binding.localVersion','&& true').replace('&& b.requestSha256 === binding.requestSha256 && b.settingsSha256 === binding.settingsSha256','&& true'),
@@ -15,7 +17,7 @@ const mutations:Mutation[]=[
  {name:'current snapshot guard',file:'improve-control-room-loop-service.ts',before:'await this.#selectionGuard!.assertCurrent(tx, checked);',after:'void checked;',
  test:'loop-selection.test.ts',title:'U81-B T9/T12 drift refuses intake before any draft/source/claim',assertion:'Missing expected rejection'},
  {name:'checker eligibility',file:'improve-control-room-loop-service.ts',before:'if (!check.data.eligible) throw new LoopPolicyRefusedV1(check.data.reasons);',after:'void check;',
- test:'loop-selection.test.ts',title:'U81-B R4 model switched off after intake refuses Start with zero additional claims or spawns',assertion:'Missing expected rejection'},
+ test:'loop-selection.test.ts',title:'U81-B R4 model switched off after intake refuses Confirm with zero additional claims or spawns',assertion:'Missing expected rejection'},
  {name:'candidate monotonic deadline',file:'improve-control-room-loop-service.ts',before:'performance.now() >= deadlineMono',after:'false',custom:s=>s.replace('performance.now() >= deadlineMono','false').replace('return Math.floor(deadlineMono - performance.now());','return Math.max(1, Math.floor(deadlineMono - performance.now()));'),
  test:'loop-selection.test.ts',title:'U81-B T12 current-reader delay cannot reset the candidate deadline',assertion:'Missing expected rejection'},
  {name:'same key immutable body',file:'improve-control-room-loop-service.ts',before:'|| !equal(prior.binding.body, body)',after:'|| false',custom:s=>s.replaceAll('|| !equal(prior.binding.body, body)','|| false'),

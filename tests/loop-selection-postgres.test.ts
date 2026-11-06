@@ -286,7 +286,7 @@ test('U81-B PG17 strict acknowledgement schema and production timestamp helper',
   assert.equal(result.cleanedUp,true);assert.deepEqual(result.leftovers,[]);
 });
 
-test('U81-B PG17 twenty separate callers share frozen-key admission and one Start',async()=>{
+test('U81-B D36 failed Start leaves no committed claim PG17',async t=>{
   assert.ok(requiresRealPostgres());
   const count=Number(execFileSync('/bin/bash',['-o','pipefail','-c','ipcs -m | tail -n +4 | wc -l'],{encoding:'utf8'}).trim());assert.ok(count<20);
   const port=Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? '60520');assert.ok(port>=60520&&port<=60539);
@@ -316,22 +316,10 @@ test('U81-B PG17 twenty separate callers share frozen-key admission and one Star
       await admin.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
         VALUES('grant:u81',$1,$2,'owner','["*"]','["*"]','critical',true,false,$3,$3)`,[scope.tenantId,owner,at]);
       await admin.query('INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)',[scope.tenantId,identity.tokenDigest,owner,at,expires]);
-      const slot={model:'fixture',route:'fixture',effort:'default' as const},selection={roles:{plan:slot,spec:slot,build:slot,final:slot,plan_reviews:[],spec_reviews:[],code_reviews:[slot]},plan_review_count:0,spec_review_count:0,code_review_count:1};
-      const snapshot={rosterDigest:'a'.repeat(64),availabilityDigest:'b'.repeat(64),revision:'fixture-1'};
-      const projection={family_policy:'review-only',...snapshot,lineupDigest:'c'.repeat(64),reservedFinal:{...slot,family:'final',class:'Frontier',cost:'subscription'},waivedReasons:[],
-        lineup:['plan','spec','build','final','code_reviews'].map(role=>({role,index:0,requested:{...slot,family:'fixture',class:'Frontier',cost:'subscription'},effective:{...slot,family:'fixture',class:'Frontier',cost:'subscription'},refusals:[],fallback:false}))};
-      delete (projection as any).revision;
-      type Status=import('../src/web/v1/improve-control-room-loop-adapter').LoopEngineStatusV1;
-      const states=new Map<string,Status>(),dispatched:string[]=[],contexts:any[]=[];
+      const {adapter,selection,snapshot,projection,traces}=await (await import('./helpers/loop-selection-start')).selectionStartAdapter(t);
+      const contexts:any[]=[];
       let arrivals=0,release!:()=>void,barrier=Promise.resolve(),afterCheck:(()=>Promise<void>)|undefined;
       const reset=()=>{arrivals=0;barrier=new Promise<void>(resolve=>{release=resolve;});};
-      const adapter:import('../src/web/v1/improve-control-room-loop-adapter').LoopAdapterV1={adapterId:'adapter:fixture',toolingRevision:'sha256:'+'a'.repeat(64),schemaDigest:'sha256:'+'b'.repeat(64),settingsText:'{}',
-        reserveRun:()=> 'fixture-'+randomBytes(16).toString('hex'),available:()=>true,
-        contract:{toolingRevision:'sha256:'+'a'.repeat(64),decodeRunIdentity:v=>loopImprovementRunIdentitySchemaV1.parse(v),decodeObservation:v=>loopImprovementObservationSchemaV1.parse(v),matchesSavedInput:(_r,o,i)=>o.settingsDigest===i.settingsSha256&&o.confirmation.sha256===i.requestSha256},
-        intake:async(id,b,text,fence,settings)=>{fence();dispatched.push(id);const hash=loopByteHashV1(settings!);const status:Status={run:{adapterId:b.adapterId,toolingRevision:b.toolingRevision,loopRunId:b.loopRunId,a2SchemaVersion:1},revision:1,inputVersion:1,state:'draft',description:text,settingsSha256:hash,settingsDigest:hash,confirmation:null,approval:null,question:null,progress:{step:'intake',completed:0,attention:'none'},receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id})}]};states.set(b.loopRunId,status);return structuredClone(status);},
-        status:async run=>structuredClone(states.get(run)!),confirmRequest:async(id,b,fence)=>{fence();dispatched.push(id);const s=states.get(b.loopRunId)!;s.state='ready';s.revision++;s.confirmation={path:'request.md',sha256:b.requestSha256,who:'owner',at:new Date().toISOString(),input_version:1};s.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id})});return structuredClone(s);},
-        start:async(id,b,fence)=>{fence();dispatched.push(id);const s=states.get(b.loopRunId)!;s.state='running';s.revision++;s.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id})});return structuredClone(s);},
-        stop:async()=>{throw Error('unused');},approve:async()=>{throw Error('unused');},answer:async()=>{throw Error('unused');},close:async()=>{}};
       const services=Array.from({length:20},()=>{
         const login=pg.connection('web');const config={host:'127.0.0.1',port:pg.port,database:pg.database,username:login.user,password:login.password,majorVersion:17 as const};
         const bound=bindPrivatePgPool(new Pool({...privatePgOptions(config),host:login.host,max:1}));pools.push(bound);
@@ -348,16 +336,28 @@ test('U81-B PG17 twenty separate callers share frozen-key admission and one Star
       const intake=await phase('intake',null,{description:'SYNTHETIC concurrent admission',settingsEdits:JSON.stringify({...selection,overrides:{reviewFamily:true,standardFinal:false}}),acceptSameFamilyRisk:true});
       const first=intake.find(v=>v.status==='fulfilled');assert.ok(first&&first.status==='fulfilled');const rid=first.value.requestId;
       assert.equal((await admin.query("SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='intake' AND entry_kind='claim'")).rows[0].n,1);
-      const state=Array.from(states.values())[0]!;
+      const state=await adapter.status((await services[0]!.status(identity,projectId,rid)).request.runLink!.loopRunId);
       const confirms=await phase('confirm',rid,{expectedVersion:1,expectedRevision:1,requestSha256:loopByteHashV1(state.description),settingsSha256:state.settingsSha256});
       assert.ok(confirms.some(v=>v.status==='fulfilled'));
       const status=await services[0]!.status(identity,projectId,rid);
-      const starts=await phase('start',rid,{expectedVersion:1,expectedRevision:2,runLinkId:status.request.runLink!.runLinkId},false);
-      assert.equal(starts.filter(v=>v.status==='fulfilled').length,1);assert.equal(starts.filter(v=>v.status==='rejected').length,19,'real conflicting Start losers');
+      const beforeStart=(await admin.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
+      const inputTables=['control_loop_improvement_inputs','control_loop_policy_input_sources','control_loop_policy_input_admissions','control_loop_policy_waivers'];
+      const saved=await Promise.all(inputTables.map(table=>admin.query(`SELECT * FROM ${table} ORDER BY 1,2,3`).then(r=>r.rows)));
+      const startBody={expectedVersion:1,expectedRevision:2,runLinkId:status.request.runLink!.runLinkId};
+      for(const sameKey of [true,false,true]){
+        const attempts=await Promise.allSettled(services.map((service,i)=>service.mutate(identity,projectId,rid,'start',startBody,
+          `u81-refused-start-${sameKey?'shared':String(i).padStart(3,'0')}-0001`)));
+        assert.equal(attempts.filter(v=>v.status==='rejected').length,20);
+        for(const attempt of attempts){assert.equal(attempt.status,'rejected');if(attempt.status==='rejected')assert.equal(attempt.reason.code,'start_deferred_u81s');}
+      }
+      assert.deepEqual((await admin.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows,beforeStart);
+      assert.deepEqual(await Promise.all(inputTables.map(table=>admin.query(`SELECT * FROM ${table} ORDER BY 1,2,3`).then(r=>r.rows))),saved);
+      assert.equal((await admin.query("SELECT count(*)::int n FROM control_loop_improvement_commands WHERE operation='start'")).rows[0].n,0);
+      assert.equal((await traces()).filter(r=>r.op==='start').length,0);
       const rows=(await admin.query("SELECT command_id,binding FROM control_loop_improvement_commands WHERE entry_kind='claim' ORDER BY operation")).rows;
-      assert.equal(rows.length,3);assert.equal(dispatched.length,3);
+      assert.equal(rows.length,2);assert.equal(contexts.length,40,'only intake/Confirm reach checker');
       for(const row of rows){const checked=contexts.find(c=>c.commandId===row.command_id);assert.deepEqual(checked.binding,row.binding);}
-      console.log('RESULT: PG17 callers=20 barriers=3 checker_candidates=60 claims=3 dispatches=3 start_conflicting_losers=19');
+      console.log('RESULT: PG17 production-login callers=20 checker_barriers=2 checker_candidates=40 claims=2 Start_refusals=60 Start_claims=0 Start_invocations=0');
       afterCheck=async()=>{
         await admin.query('BEGIN');
         await admin.query('SELECT id FROM projects WHERE id=$1 FOR UPDATE',[projectId]);
@@ -372,7 +372,7 @@ test('U81-B PG17 twenty separate callers share frozen-key admission and one Star
       }finally{await admin.query('ROLLBACK');afterCheck=undefined;}
       assert.deepEqual((await admin.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows,beforeWait);
       assert.equal((await admin.query('SELECT count(*)::int n FROM control_loop_improvement_requests')).rows[0].n,1);
-      assert.equal(dispatched.length,3,'deadline rollback dispatches no additional command');
+      assert.equal((await traces()).filter(r=>r.op!=='status').length,2,'deadline rollback dispatches no additional command');
       console.log('RESULT: PG17 checker-then-project-lock overrun bounded=true new_draft_source_claim=0 new_dispatch=0');
 
     }finally{await Promise.all(pools.map(p=>p.close()));await admin.end();}

@@ -208,8 +208,8 @@ finally:s.doCleanups()
     await service.mutate(identity,f.project.projectId,intake.requestId,'confirm',{expectedVersion:1,expectedRevision:1,requestSha256:loopByteHashV1('Synthetic Start drift'),settingsSha256:state!.settingsSha256},'u81-native-start-confirm-0001');
     const status=await service.status(identity,f.project.projectId,intake.requestId);
     const before=(await db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
-    await assert.rejects(service.mutate(identity,f.project.projectId,intake.requestId,'start',{expectedVersion:1,expectedRevision:2,runLinkId:status.request.runLink!.runLinkId},'u81-native-start-drift-claim-0001'));
-    assert.equal(checks,3);assert.equal(changed,true);assert.equal(startWorkers,0);
+    await assert.rejects(service.mutate(identity,f.project.projectId,intake.requestId,'start',{expectedVersion:1,expectedRevision:2,runLinkId:status.request.runLink!.runLinkId},'u81-native-start-drift-claim-0001'),{code:'start_deferred_u81s'});
+    assert.equal(checks,2);assert.equal(changed,false,'D36 withholds Start before checker drift hook');assert.equal(startWorkers,0);
     assert.equal((await db.query("SELECT * FROM control_loop_improvement_commands WHERE operation='start'")).rows.length,0);
     assert.deepEqual((await db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows,before);
   });

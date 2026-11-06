@@ -385,3 +385,11 @@ Why/cost: B is the smallest safe first change, preserving B7 mapping, paid fence
 Required regression: **`U81-B D36 failed Start leaves no committed claim through real adapter`**, plus the PG17 production-login sibling, checks typed 503, unchanged row sets, zero workers and retry/concurrency safety; guard-off must fail on the intended assertion. §4.2.2 gives exact files, alternative A, native evidence, commands and sensitive review gates. Those tests are requirements, not executed evidence. This resolves the R11/independent review MEDIUM-1 specification conflict; the implementation defect remains until a later BUILD passes them.
 
 Affected spec item: new 4.2.2; 4.2 candidate scope and 8.1 seam lines. Earlier successful Start/renewal promises and tests apply to U81-S; launcher-only preview/Prepare/Confirm remain independent of U83a.
+
+
+## D36 R12 — reviewed refusal detail
+
+Choice: new B8 Start uses the additive WebAccessError code `start_deferred_u81s`, mapped to HTTP 503. Verified B8 status disables Start and supplies the same code through existing display.attention when no stronger recovery/Stop attention exists. The pre-claim fence follows exact replay lookup, preserving reconciliation and native P71 dispatch.
+Options: generic service_unavailable; distinguishable stable refusal.
+Why: lead-adopted START-CONTRACT review LOW-1/LOW-2 require a useful UI explanation and wire distinction from outages. Section 9 now describes Confirm admission and typed Start refusal; successful Start checks remain U81-S. LOW-3 slice registration belongs to the lead. Shared real-adapter test helper is an additive export under the R9 exception, used by both bridge and production-login PG tests without stubbed Start admission.
+Affected spec item: 4.2.2, 9.1, 9.4; no U81-S implementation or new paid-cap behavior.

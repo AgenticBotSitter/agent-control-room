@@ -503,13 +503,13 @@ async function selectionAdmissionFixture(t: TestContext, freshness=5000) {
     normalize(){current.description+=' Normalized.';current.inputVersion=2;current.revision++;}};
 }
 
-test('U81-B R3/T6/T11 intake Confirm Start check exact saved bytes and immutable dispatch identities',async t=>{
+test('U81-B R3/T6/T11 intake Confirm check exact saved bytes and deferred Start keeps immutable dispatch identities',async t=>{
   const f=await selectionAdmissionFixture(t),r=await f.intake(); assert.equal(r.state,'accepted');
   assert.equal((await f.confirm(r.requestId)).state,'accepted');
-  assert.equal((await f.start(r.requestId)).state,'accepted');
-  assert.equal(f.checks.length,3);assert.equal(f.spawns,3);assert.equal(f.dispatches.length,3);
+  await assert.rejects(f.start(r.requestId),{code:'start_deferred_u81s'});
+  assert.equal(f.checks.length,2);assert.equal(f.spawns,2);assert.equal(f.dispatches.length,2);
   const rows=(await f.db.query<{binding:LoopBridgeBindingV1;command_id:string}>(`SELECT binding,command_id FROM control_loop_improvement_commands WHERE entry_kind='claim' ORDER BY created_at,command_id`)).rows;
-  assert.equal(rows.length,3);
+  assert.equal(rows.length,2);
   for(const row of rows){
     const checked=f.checks.find(x=>x.context.mode==='admission'&&x.context.commandId===row.command_id)!;
     assert.ok(checked);assert.equal(checked.context.mode,'admission');
@@ -520,11 +520,11 @@ test('U81-B R3/T6/T11 intake Confirm Start check exact saved bytes and immutable
   assert.equal(new Set(f.checks.map(x=>x.text)).size,1);
 });
 
-test('U81-B R4 model switched off after intake refuses Start with zero additional claims or spawns',async t=>{
-  const f=await selectionAdmissionFixture(t),r=await f.intake();await f.confirm(r.requestId);f.off();
-  await assert.rejects(f.start(r.requestId),{message:'loop_policy_refused'});
-  assert.equal(f.checks.length,3);assert.equal(f.spawns,2);
-  assert.equal((await f.db.query(`SELECT * FROM control_loop_improvement_commands WHERE operation='start'`)).rows.length,0);
+test('U81-B R4 model switched off after intake refuses Confirm with zero additional claims or spawns',async t=>{
+  const f=await selectionAdmissionFixture(t),r=await f.intake();f.off();
+  await assert.rejects(f.confirm(r.requestId),{message:'loop_policy_refused'});
+  assert.equal(f.checks.length,2);assert.equal(f.spawns,1);
+  assert.equal((await f.db.query(`SELECT * FROM control_loop_improvement_commands WHERE operation='confirm'`)).rows.length,0);
 });
 
 for(const failure of ['drift','missing','malformed'] as const)test(`U81-B T9/T12 ${failure} refuses intake before any draft/source/claim`,async t=>{
@@ -544,16 +544,16 @@ test('U81-B T7 accepted lineage retains its original timestamp beyond five secon
   const accepted=f.checks[0]!.context;assert.equal(accepted.mode,'admission');if(accepted.mode!=='admission')throw Error('context');
   const ack=structuredClone(accepted.binding.sameFamilyAcknowledgement);
   f.advanceTime(6000);assert.equal((await f.confirm(r.requestId)).state,'accepted');
-  f.advanceTime(6000);assert.equal((await f.start(r.requestId)).state,'accepted');
+  f.advanceTime(6000);await assert.rejects(f.start(r.requestId),{code:'start_deferred_u81s'});
   for(const checked of f.checks){assert.equal(checked.context.mode,'admission');if(checked.context.mode==='admission')assert.deepEqual(checked.context.binding.sameFamilyAcknowledgement,ack);}
 });
 
-test('U81-B T7 explicit fresh intent at unchanged Confirm and Start mints a new timestamp',async t=>{
+test('U81-B T7 explicit fresh intent at unchanged Confirm mints a new timestamp and Start remains deferred',async t=>{
   const f=await selectionAdmissionFixture(t),r=await f.intake(true);
   f.advanceTime(6000);assert.equal((await f.confirm(r.requestId,true)).state,'accepted');
-  f.advanceTime(6000);assert.equal((await f.start(r.requestId,true)).state,'accepted');
+  f.advanceTime(6000);await assert.rejects(f.start(r.requestId,true),{code:'start_deferred_u81s'});
   const times=f.checks.map(x=>x.context.mode==='admission'?Date.parse(x.context.binding.sameFamilyAcknowledgement!.accepted_at):0);
-  assert.ok(times[1]!>times[0]!+5000);assert.ok(times[2]!>times[1]!+5000);
+  assert.equal(times.length,2);assert.ok(times[1]!>times[0]!+5000);
 });
 
 test('U81-B T7 normalized Confirm requires new intent for the changed input',async t=>{

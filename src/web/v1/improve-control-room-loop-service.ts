@@ -514,6 +514,13 @@ export class ImproveControlRoomLoopServiceV1 {
         if (selection.sameFamilyReview && !selection.acceptanceCurrent) display.canStart = false;
       } catch { selectionUnavailable = true; }
     }
+    if (provenance === "product-b8") {
+      display.canStart = false;
+      // Preserve recovery/Stop attention on runs with a retained Start claim.
+      if (!startClaim && !display.attention) display.attention = { code: "start_deferred_u81s",
+        message: "Starting this saved selection is unavailable until subscription-launcher support is released.",
+        nextAction: "Keep the saved request and confirmation until starting is supported." };
+    }
     if (selectionUnavailable) display.canStart = false;
     const projected = loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display, ...(selection ? { selection } : {}),
       decisions: loopImprovementDecisionsSchemaV1.parse(selectionUnavailable ? { gate: unavailableLoopGate(), observedAt: display.observedAt } : recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
@@ -777,6 +784,9 @@ export class ImproveControlRoomLoopServiceV1 {
       return { local, policy, owner: actor.id };
     });
     if (before.replay) return this.#dispatch(identity, projectId, operation, body, undefined, before.replay);
+    // D36: launcher-only B8 Start awaits U81-S. Keep exact committed replays
+    // above this fence; a new attempt must never consume its one-shot claim.
+    if (["start"].includes(operation)) throw new WebAccessError("start_deferred_u81s");
     if (!this.#selectionGuard || !this.#adapter.available(operation) || this.#freshness <= 1000) throw unavailable();
     const local = before.local, text = before.policy?.text ?? local!.input.settings_text;
     const decoded = decodeSelectionEditsV1(text);
