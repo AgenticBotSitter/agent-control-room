@@ -1,11 +1,14 @@
-# b8-selection-to-start — U81-B round 5
-
-Predecessor/final HEAD: 0d3269bad6a263db5e1cccb25f304b65b6d012f2, branch cook/b8-selection-u81b. No new commit: index.lock creation refused; no staging retry.
-
-Retained: section 5.1 product transport with unchanged signed binding, separate authenticated custody, configured-driver custody requirement, plain/retained-owned receipt/recovery branches and focused tests/registration. Tools pin ec2359ece1921a7510ce191cc078ab5e7e3175cb is read-only; full host qualification remains lead-owned. Native child inventory grows 38 to 41 (+3); all prior titles preserved.
-
-B1b/B2 stop at D28: the required timestamp helper EXECUTE grant is refused by the closed Mac upgrade grant parser, whose file is outside the reviewed section 4.4 set and allowed paths. No out-of-scope parser edit or grant weakening. Dependent drafts and evidence are preserved in ignored scratch; their product changes are restored. 0316/0317 remain unconsumed; all predecessor table counts, grants and schema pins remain unchanged.
-
-Retained-tree verification: native selection 42/42, focused custody/recovery 5/5, custody guard mutations 3/3 (two independently caught/restored), production/demo TypeScript and lane registration pass. Full recovery/build results and outstanding gates are recorded in the round-5 external report. No U81-B admission/SQL, reviewer, Linux, full-host, actual worker/device or selection-to-start green claim.
-
-Status: BLOCKED: section 4.4 omits required Mac upgrade grant allowlist file; B1b/B2 withheld
+# b8-selection-to-start status
+Phase: BUILD — U81-B round 10
+Base: cook/b8-selection-u81b b671cccbdf91e0ab56fef039cba4c47e26455548
+Candidate: HEAD plus retained uncommitted B1b/B2 implementation; no commit created (index.lock refused)
+Spec gate: lead round-10 continuation; D33 review HIGH 0, D34/D35 amendments recorded
+Budget: 2026-11-06T10:34:06.501731+00:00, deadline 2026-11-06T16:34:06.501731+00:00, elapsed 117.9 minutes
+Completed: integrated B8 admission, readiness/provenance, immutable exactly-one-to-one admission table/native backfill, deferred reverse FK, compatible rollback, count/grant/pin updates; B2a status regression and historical raw-draft-key refusal
+Checks: final five 147/147; latest full PG 84/86 (two IPC-precheck refusals); focused bridge 4/4; exact P72 1/1; native 44/44; UI 52/52 PASS. Final affected eight {'tests': 408, 'pass': 407, 'fail': 0, 'skipped': 1}. Broad {'tests': 941, 'pass': 935, 'fail': 1, 'skipped': 5}; stable production {'tests': 118, 'pass': 86, 'fail': 32, 'skipped': 0}; boundary 2/11. Full results/limits in evidence and R10 report.
+Reviews: exact built-head Crouton then DeepSeek pending after lead commit; no independent CLEAN claim
+Pending qualification: named failing/missing gates, full host, Linux parity and separately authorized worker/device proof
+Owner questions: none new; rollout precondition and prior questions unchanged
+Next action: lead commit/reviews and resolution or qualification of the explicitly retained gate failures
+Cleanup: all owned foreground commands returned; disposable PG cleanup and owned-cluster audit completed; no real worker/provider or live-install operation
+Status: BLOCKED: broader/environment qualification gates fail; index.lock prevents commit

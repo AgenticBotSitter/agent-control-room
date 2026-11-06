@@ -271,3 +271,105 @@ Choice (lead decision already made): `tests/loop-policy-enforcement.test.ts` may
 Why: R7 MEDIUM F2 needs reverse/forward dependency order. Keep the predecessor digest assertion and existing retained-layer/refused-down assertions exactly; no other change to that file is authorized. This spec run records the decision only and leaves the test untouched.
 Check (REQUIRED in later BUILD): `CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern='^P72 empty enforcement down re-up restores exact shape and retained unlocked layers refuse$' tests/loop-policy-enforcement.test.ts` must pass its predecessor and restored digest assertions without skips/quarantine. Retain native PG17 migration integration gates from §9/10.
 Affected spec item: 4.4/9; narrowly supersedes D28's R7 P72 allowed-file stop, not its other outstanding gates.
+
+
+## D31 — Lead authorization: P71 empty-downgrade ordering only
+
+Choice: the existing P71 empty-downgrade chain may unwind 0317 then 0316 first and, where restoring migrations, restore them last, matching D30's dependency order. Preserve its predecessor digest assertion.
+Options: leave the new acknowledgement/provenance schema in the predecessor digest; unwind the dependent pair before the existing chain.
+Why: the lead explicitly authorized the latter in the round-8 continuation. The retained draft already adds the two downs; the existing P71 test has no forward restore chain. No predecessor assertion was changed. Final verification remains pending.
+Affected spec item: 4.2.1/4.4/9; no broader policy-test changes are authorized.
+
+## R8 scope stop — typed unavailable constructor
+
+The round-8 LOW-2 instruction and D29 require a real `WebAccessError("service_unavailable")`. At the build base, `src/web/v1/access-verifier.ts:7-8` excludes `service_unavailable` from the constructor's code union. `http-common.ts` already maps that code to HTTP 503. The constructor file is absent from the exact allowed files. TypeScript rejects all six new typed uses. Per the continuation's spec/code stop rule, dependent implementation stops; no cast, generic-error substitute or out-of-scope edit is made. A narrow authorization to add that one union member is required before resuming. The retained candidate is incomplete and unqualified.
+
+
+## D32 — Round-9 additive type authorization
+
+The lead authorizes adding service_unavailable to WebAccessError's code union in src/web/v1/access-verifier.ts. This single additive type member admits D29's required typed HTTP 503 refusal; http-common already maps it. No existing caller behavior changes. Round 9 also permits strictly additive types/constants/exports/test registration outside named files when required by the spec, with each file and reason listed in the report. The historical R8 constructor scope stop is superseded; all executable qualification remains required.
+
+
+## R9 required down/re-up conflict (not a new policy decision)
+
+D32's additive constructor member compiles. D29 factory/provenance recording cases pass in both real applications. Required native PG17 and unchanged D30 P72 restoration checks expose a separate conflict: section 4.2.1 ADD/DROP admission_kind changes its physical attnum from 7 to 8 after down/re-up. The product and updater schema readers both include attnum. A disposable PG17 catalog comparison finds exactly one differing digest row, control_loop_policy_input_sources.admission_kind; all other manifest rows are identical. Fresh digest is 2bbd9c8d6a2ec92afc08b8d6eccb101b11293842e20ec3c22be4b0618062a2f6; re-up digest is 1c2f8faf3fbde0cf4b315386ec94410d6c3b624038139521839c4e5d579581bd. Predecessor digest assertions remain unchanged and pass before re-up.
+
+Stop dependent B1b/B2 implementation under the brief's spec/code rule. No catalog edits, reader normalization, weakened assertion, table recreation, signed row rewrite or trigger surgery is chosen. The lead must supply a reviewed rollback/digest design consistent with the retained-history and exact-shape requirements. B1a checker execution and D27 transport are existing committed seams; D32 alone is a completed additive type fix. The retained admission/provenance/SQL candidate remains incomplete. Missing historical upgrade, all-versions-empty cross-endpoint, unlinked-status and remaining qualification evidence must still be finished after the conflict is resolved.
+
+
+## D33 — Admission-kind storage without physical column drift
+
+Choice: use NEW 1:1 `control_loop_policy_input_admissions`. Replace only D29/§4.2.1's storage/backfill/rollback instructions; all other issuance, copy, historical-native, readiness and refusal rules remain. No reversible migration may ADD/DROP a column on an existing table. D30/P72 and native PG17 exact restoration gates remain unchanged.
+
+Option (1) is unsafe within that contract: 0310's `control_loop_policy_input_sources` has only `tenant_id`, `request_id`, `input_version`, `defaults_sha256`, `layer_versions`, `waiver_id`. Its immutable `layer_versions` permits exactly numeric `project`/`selection` and is unsigned; `defaults_sha256` is a hash and 0314 makes `waiver_id` a waiver FK. No signed metadata exists. 0301's signed immutable `control_loop_improvement_inputs.description/settings_text` are exact engine bytes, checked with their hashes by `service.ts`'s `#verifyLoop`; settings are caller-composed in `loop-policy-compose.ts`, with no reserved server metadata slot. Adding/stripping a marker changes checker/dispatch bytes or breaks saved/observed hashes. Its signed `idempotency_key` is caller supplied and replay-bearing. Do not overload keys, hashes or authentication tags. Option (2) is the only safe storage-only mechanism found. It needs a **lead D26 amendment: application 264→265, native public 265→266** after up, reverting on down. D33 proposes this exception; it does not authorize implementation/count-assertion edits.
+
+0316/0317 outline (same allocated filenames, transaction/timeouts and acknowledgement SQL; all four headers name both concerns):
+
+- **0316 up:** replace source-column DDL with the following. Before rollout prove no deployed product-B8 writer ever existed; otherwise stop for review. Backfill every source version, never update sources/signed history or disable triggers.
+
+```sql
+CREATE TABLE control_loop_policy_input_admissions (
+  tenant_id text NOT NULL, request_id text NOT NULL,
+  input_version bigint NOT NULL, admission_kind text NOT NULL,
+  PRIMARY KEY (tenant_id,request_id,input_version),
+  CONSTRAINT control_loop_policy_input_admissions_kind_check
+    CHECK (admission_kind IN ('native-p71','product-b8'))
+);
+ALTER TABLE control_loop_policy_input_admissions
+  ADD CONSTRAINT control_loop_policy_input_admissions_source_fk
+  FOREIGN KEY (tenant_id,request_id,input_version)
+  REFERENCES control_loop_policy_input_sources(tenant_id,request_id,input_version)
+  ON DELETE RESTRICT NOT VALID;
+CREATE TRIGGER control_loop_policy_input_admissions_immutable
+  BEFORE UPDATE OR DELETE ON control_loop_policy_input_admissions
+  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_loop_policy_input_admissions_no_truncate
+  BEFORE TRUNCATE ON control_loop_policy_input_admissions
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+INSERT INTO control_loop_policy_input_admissions
+  (tenant_id,request_id,input_version,admission_kind)
+SELECT tenant_id,request_id,input_version,'native-p71'
+FROM control_loop_policy_input_sources;
+```
+
+- **0317 up:** retain both command CHECK validations; replace source-kind validation with `ALTER TABLE control_loop_policy_input_admissions VALIDATE CONSTRAINT control_loop_policy_input_admissions_source_fk;`. Its kind CHECK is valid from creation. Mirror source SELECT/INSERT grants, including `control_room_private_web`, through §4.4's existing role/convergence files; no mutation grants. Regenerate ledger/digests/fixtures together after the lead decision.
+- **0317 down:** retain command unvalidation; replace source-kind handling with `ALTER TABLE control_loop_policy_input_admissions DROP CONSTRAINT control_loop_policy_input_admissions_source_fk;` and the exact FK ADD above, restoring NOT VALID atomically.
+- **0316 down:** before DDL, `LOCK TABLE control_loop_policy_input_admissions, control_loop_improvement_commands IN ACCESS EXCLUSIVE MODE;`. Refuse SQLSTATE 23514 if `EXISTS (SELECT 1 FROM control_loop_policy_input_admissions WHERE admission_kind='product-b8')` OR either existing acknowledgement predicate, including unacknowledged B8. Otherwise `DROP TABLE control_loop_policy_input_admissions;` without CASCADE, replacing the column drop; retain predecessor command/helper rollback. Refused down changes nothing and concurrent writers cannot race the check.
+
+Reads/writes: `recordInputSources` inserts exactly one source/admission pair atomically with signed input/claim; no kind default. `copyInputSources` copies exactly one pair and kind or refuses typed 503. Join the pair through verified owned signed lineage for Confirm/Start/selectionTarget/status; version 1/current must agree. The side fact is immutable, not independently signed, under D29's existing threat model. Do not manufacture sources/admissions for 0301-before-0310 inputs: verified **all-versions-empty** source history retains native Confirm/Start/status/no-source copy only, never B8 authority. Any source makes missing/invalid/disagreeing version-1/current pairs refuse 503/blocked UNAVAILABLE. Query failure is not empty.
+
+REQUIRED later BUILD reds in D29's existing five test files: unchanged six source columns/attnums; production-login duplicate/orphan/null/unknown-kind and UPDATE/DELETE/TRUNCATE refusal; pair insert/copy failure rolls back all rows/claims; retained/copy/version-1/current/cross-lineage/replay checks; real 0301-before-0310 native upgrade and every-version backfill preserving signed bytes/tags; all-versions-empty B8 refusal; ambiguous-history rollout stop; unacknowledged B8/acknowledgement and concurrent insert/down refusal. Keep factory/native positives and guard-off tests. Current column draft is red for physical restoration; these new tests are requirements, not executed evidence.
+
+REQUIRED after implementation: run D30's exact named P72 command and the five-file D29 command from the amendment report, including qualified native PG17 fresh/upgrade/down/re-up/refused-down. Pass without quarantine/skips. Keep predecessor digest literal, restored equality and both product/updater attnum readers byte-identical. Existing tables never gain dropped-column slots; recreate the new table whole in the same column order with identical constraints/triggers/validation/grants, so fresh/restored manifest bytes must match exactly. Regenerate fresh pins for the new table; never change the predecessor pin or accept an alternate digest. This is a design argument, not PG17 qualification.
+
+Sensitive: admission, migrations, retained data, grants and concurrent rollback. Frontier builder; production-login database, guard-off, contention and independent attack/CI reviews remain required, followed by the assigned reviewer. Open decision: lead approval of the exact D26 count exception. No build in this amendment.
+
+
+## D34 — Lead authorization: D33 catalog counts
+
+Choice: application tables 265 / native public 266 after 0316/0317 up; restore 264/265 after down. Update existing fixture/count assertions. D33 adds one new table without modifying existing column positions.
+Options: retain zero-table counts; count the new immutable side table.
+Why: the round-10 lead explicitly authorizes the measured table-count amendment; no digest-reader or predecessor-pin changes.
+Affected spec item: 4.2.1/4.4.
+
+## D35 — Lead authorization: exact pair integrity and rollback grants
+
+Choice: source→admission FK DEFERRABLE INITIALLY DEFERRED plus restrictive admission→source FK and shared PKs enforce exactly one-to-one at commit. Native backfill precedes the reverse FK. 0316 down locks both tables and commands, refuses retained B8 before dropping the table; remove reverse FK before DROP without CASCADE. 0317 down leaves pair FKs validated until 0316 down, avoiding unnecessary NOT VALID re-add. P72 re-up reapplies role SQL and asserts private web INSERT privilege separately from shape digest, which excludes ACLs. Correct obsolete spec referents, column instructions and fixture comment.
+Options: application-only pair discipline; commit-time database pair constraint.
+Why: round-10 lead decisions resolve D33 review MEDIUM-1/2 and LOW-1..4. Exactly one-to-one is a commit invariant; inserting source then admission in one transaction remains valid. D33's earlier 0317-down outline and pending-count caveat are superseded by D34/D35.
+Affected spec item: 4.2.1/4.4/9; P72 chain amendment only.
+
+## R10 CI registration detail — allocated PG test default
+
+Choice: the new PG test file defaults to the lead-allocated port base 60520 when no override is supplied; explicit CONTROL_ROOM_PG_TEST_PORT_BASE still controls the same reserved range. No product or existing test default changes.
+Options: make CI export a job-specific override; give this new test its already allocated default.
+Why: the registered component lane supplies PG_BIN but no port variable. An unset port previously became NaN and prevented its deciding assertions. The focused native PG entry point passes with the override removed, as does the full lane with the supplied override.
+Affected spec item: 4.4/9, new test registration; Linux runtime parity remains a later gate.
+
+
+## R10 historical pre-journal draft key
+
+Choice: when the B8 admission transaction's saveLoopDraft returns replayed, call the existing owned-lineage kind assertion before source/admission insertion or waiver consumption. A historical-native draft refuses typed service_unavailable; native issuance is unchanged.
+Options: treat a matching raw draft key as fresh B8 issuance; preserve the saved lineage's historical-native classification.
+Why: section 4.2.1's all-versions-empty rule and the round-8 LOW-4 require B8 refusal when no kind exists to compare. A pre-journal signed draft can have an input idempotency key without any command claim. The regression test showed that reusing that key previously minted product-b8 provenance and dispatched; the new guard returns 503 with every row unchanged. It adds no discriminator or new public mode. A separate guard-off mutation and required consolidated reruns verify the fence.
+Affected spec item: 4.2.1, T8 historical/cross-endpoint replay.

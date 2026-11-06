@@ -112,6 +112,39 @@ test("grant plan covers the source role files and detects additions and extras e
   assert.throws(() => desiredMacGrantsV1(sources), /upgrade_grant_source_duplicate/u);
 });
 
+test("selection timestamp grant is limited to its exact signature and private web role", async () => {
+  const files = ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
+    "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+    "agent_reviewer_roles.sql", "fleet_gateway_roles.sql"];
+  const sources = Object.fromEntries(await Promise.all(files.map(async file =>
+    [file, (await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8"))
+      .replace(/^GRANT EXECUTE ON FUNCTION control_loop_selection_ack_timestamp_v1\(text\) TO control_room_private_web;\n/mu, "")])));
+  const signature = "public.control_loop_selection_ack_timestamp_v1(text)";
+  const grant = `control_room_private_web|function|${signature}||EXECUTE|plain`;
+  const augmented = { ...sources, "private_web_roles.sql": sources["private_web_roles.sql"] +
+    "\nGRANT EXECUTE ON FUNCTION control_loop_selection_ack_timestamp_v1(text) TO control_room_private_web;\n" };
+  assert.ok(desiredMacGrantsV1(augmented).has(grant));
+  const calls = [];
+  const client = { query: async sql => calls.push(sql) };
+  await applyMacGrantDiffV1(client, { extra: [], missing: [grant] });
+  assert.deepEqual(calls, [`GRANT EXECUTE ON FUNCTION ${signature} TO control_room_private_web`]);
+  await applyMacGrantDiffV1(client, { extra: [
+    `control_room_fleet_gateway|function|${signature}||EXECUTE|grantable`], missing: [] });
+  assert.equal(calls.at(-1), `REVOKE EXECUTE ON FUNCTION ${signature} FROM control_room_fleet_gateway`);
+
+  for (const refused of [
+    `control_room_fleet_gateway|function|${signature}||EXECUTE|plain`,
+    "control_room_private_web|function|public.control_loop_selection_ack_timestamp_v1(jsonb)||EXECUTE|plain",
+    "control_room_private_web|function|public.control_loop_selection_ack_timestamp_v2(text)||EXECUTE|plain",
+  ]) {
+    await assert.rejects(applyMacGrantDiffV1(client, { extra: [], missing: [refused] }), /upgrade_unexpected_function_grant/u);
+    const [role, , object] = refused.split("|");
+    const changed = { ...sources, "private_web_roles.sql": sources["private_web_roles.sql"] +
+      `\nGRANT EXECUTE ON FUNCTION ${object} TO ${role};\n` };
+    assert.throws(() => desiredMacGrantsV1(changed), /upgrade_grant_source_refused/u);
+  }
+});
+
 test("grant convergence applies only the pinned function boundaries", async () => {
   const calls = [];
   const client = { query: async sql => { calls.push(sql); } };

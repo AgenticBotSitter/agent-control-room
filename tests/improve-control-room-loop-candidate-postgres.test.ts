@@ -217,7 +217,7 @@ test("B4 PostgreSQL fresh production login exact grants preflight and schema dig
   assert.equal(JSON.parse(await readFile("src/updater/v1/policy/release-schema-digest.json","utf8")).digest,measured);
   await verifyPrivateDatabase(w.client,w.config,{...scope,ownerIdentityId:owner,issuer:"test"},now,{nativeQueue:true});
   const count=(await sql(pg,"SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")).rows[0].n;
-  assert.equal(count,265);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
+  assert.equal(count,266);console.log(`B4 native public_catalog=${count} application_catalog=${count-1}`);
   for(const table of ["control_loop_update_candidates","control_loop_update_candidate_decisions"]){
    for(const role of ["app","scheduler","coordinator","results","publisher","queueWorker","intake","news","fleet"])
     await assert.rejects(sql(pg,`SELECT * FROM ${table}`,[],role),{code:"42501"},`B4 broad role ${role} denied`);
@@ -291,7 +291,9 @@ test("B4 PostgreSQL 24 publication callers and decision contenders preserve one 
 test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger",async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
  try{
-  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/migrations/0309%' AND filename NOT LIKE 'db/migrations/0310%' AND filename NOT LIKE 'db/migrations/0311%' AND filename NOT LIKE 'db/migrations/0312%' AND filename NOT LIKE 'db/migrations/0313%' AND filename NOT LIKE 'db/migrations/0314%' AND filename NOT LIKE 'db/migrations/0315%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  const before=(await admin.query("SELECT * FROM control_room_schema_migrations WHERE filename NOT LIKE 'db/migrations/0303%' AND filename NOT LIKE 'db/migrations/0304%' AND filename NOT LIKE 'db/migrations/0305%' AND filename NOT LIKE 'db/migrations/0307%' AND filename NOT LIKE 'db/migrations/0308%' AND filename NOT LIKE 'db/migrations/0309%' AND filename NOT LIKE 'db/migrations/0310%' AND filename NOT LIKE 'db/migrations/0311%' AND filename NOT LIKE 'db/migrations/0312%' AND filename NOT LIKE 'db/migrations/0313%' AND filename NOT LIKE 'db/migrations/0314%' AND filename NOT LIKE 'db/migrations/0315%' AND filename NOT LIKE 'db/migrations/0316%' AND filename NOT LIKE 'db/migrations/0317%' AND filename NOT LIKE 'db/roles/%' ORDER BY ledger_order")).rows;
+  await admin.query(await readFile("db/down/0317_control_loop_selection_acknowledgement_validate.sql","utf8"));
+  await admin.query(await readFile("db/down/0316_control_loop_selection_acknowledgement.sql","utf8"));
   await admin.query(await readFile("db/down/0315_control_loop_paid_admission.sql","utf8"));
   await admin.query(await readFile("db/down/0314_control_loop_policy_enforcement.sql","utf8"));
   await admin.query(await readFile("db/down/0313_control_loop_provider_prices.sql","utf8"));
@@ -303,7 +305,7 @@ test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger"
   await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0317%' OR filename LIKE 'db/migrations/0316%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -401,6 +403,8 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
   assert.ok(files.includes("db/migrations/0302_control_loop_improvement_commands.sql"));assert.ok(!files.includes("db/migrations/0303_control_loop_update_candidates.sql"));
   for(const file of files){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),execFileSync("git",["show",`${base}:${file}`],{maxBuffer:8*1024*1024}));}
   const admin=new Client(pg.admin());await admin.connect();try{
+   await admin.query(await readFile("db/down/0317_control_loop_selection_acknowledgement_validate.sql","utf8"));
+   await admin.query(await readFile("db/down/0316_control_loop_selection_acknowledgement.sql","utf8"));
    await admin.query(await readFile("db/down/0315_control_loop_paid_admission.sql","utf8"));
    await admin.query(await readFile("db/down/0314_control_loop_policy_enforcement.sql","utf8"));
   await admin.query(await readFile("db/down/0313_control_loop_provider_prices.sql","utf8"));
@@ -412,7 +416,7 @@ test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async
    await admin.query(await readFile("db/down/0305_control_loop_candidate_unavailable_sections.sql","utf8"));
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
    await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
-   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0317%' OR filename LIKE 'db/migrations/0316%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
   }finally{await admin.end();}
   await migrateRoot(pg,stage);await seed(pg);
   const w=web(pg);fixture=await syntheticFixture({client:w.client,db:{...w.client,close:w.close},identity,project:{projectId:project}},{prePolicySchema:true});
@@ -496,8 +500,8 @@ test("B4 inherited fixture preparation measures 264 tables and preserves refusal
  const child=await exec(process.execPath,["scripts/run-tests-with-quarantine.mjs","--import","tsx","--test","--test-concurrency=1","--test-timeout=600000",
   "--test-name-pattern=^B1a fixture preparation (shipped ownership|prepared|wrong owner|nonempty)$","tests/improve-control-room-desk-postgres.test.ts"],
   {env,timeout:600000,maxBuffer:8*1024*1024});
- assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=264/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
- console.log("B4 native inherited_fixture_cases=4 prepared_catalog=264 ownership_and_nonempty_refusals=true");
+ assert.match(child.stdout,/# pass 4/u);assert.match(child.stdout,/# fail 0/u);assert.match(child.stdout,/catalog=265/u);assert.doesNotMatch(child.stdout,/# skipped [1-9]/u);
+ console.log("B4 native inherited_fixture_cases=4 prepared_catalog=265 ownership_and_nonempty_refusals=true");
 });
 
 // S1: production-login storage, process-independent reopen, route withdrawal and exact grants.
@@ -646,10 +650,12 @@ test('S2 PostgreSQL failed price migration leaves neither table nor ledger entry
  const admin=new Client(pg.admin());await admin.connect();
  const stage=await mkdtemp(resolve('.test-tmp/s2-migration-'));
  try{
+  await admin.query(await readFile('db/down/0317_control_loop_selection_acknowledgement_validate.sql','utf8'));
+  await admin.query(await readFile('db/down/0316_control_loop_selection_acknowledgement.sql','utf8'));
   await admin.query(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
   await admin.query(await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8'));
   await admin.query(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));
-  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+  await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0317%' OR filename LIKE 'db/migrations/0316%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
   const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
   const entries=await collectLedgerEntries(resolve('.'));
   for(const entry of entries){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
@@ -671,7 +677,7 @@ test('S2 PostgreSQL failed price migration leaves neither table nor ledger entry
 test("B5 PostgreSQL review identity SQL bounds and 0307 down re-up",async()=>run(async pg=>{
  // Build the actual pre-B7 schema before signing legacy rows. Later B7 downs
  // correctly refuse retained commands, so they cannot prepare this prefix after signing.
- for (const name of ['0315_control_loop_paid_admission','0314_control_loop_policy_enforcement',
+ for (const name of ['0317_control_loop_selection_acknowledgement_validate','0316_control_loop_selection_acknowledgement','0315_control_loop_paid_admission','0314_control_loop_policy_enforcement',
    '0313_control_loop_provider_prices','0312_control_loop_providers','0311_control_loop_policy_validate',
    '0310_control_loop_policy','0309_control_loop_roster'])
    await sql(pg,await readFile(`db/down/${name}.sql`,'utf8'));

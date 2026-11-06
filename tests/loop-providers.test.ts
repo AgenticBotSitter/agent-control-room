@@ -841,7 +841,7 @@ test('S4 Start handler exposes a typed missing-secret refusal as 422',async()=>{
  const {LoopProviderRefusedV1}=await import('../src/web/v1/loop-provider-service');
  const unused=async():Promise<never>=>{throw new Error('unused fixture operation');};
  const handler=createImproveControlRoomHttpHandlerV1({origin,trust,clock:()=>now,loopBridge:{
-  mutate:async()=>{throw new LoopProviderRefusedV1('secret_missing');},status:unused,viewDesk:unused,readApprovalDocument:unused,
+  mutate:async()=>{throw new LoopProviderRefusedV1('secret_missing');},status:unused,viewDesk:unused,readApprovalDocument:unused,intakeSelection:unused,
  }});
  const response=await handler(request('/api/v1/projects/project:fixture/improvements/loop/request:fixture/start','POST',
   {expectedVersion:1,expectedRevision:1,runLinkId:'link:fixture',route:S4_ROUTE},key()));
@@ -853,7 +853,7 @@ for(const reason of ['base_url','price_source_url','roster_mismatch'] as const)t
  const {LoopProviderRefusedV1}=await import('../src/web/v1/loop-provider-service');
  const unused=async():Promise<never>=>{throw new Error('unused fixture operation');};
  const handler=createImproveControlRoomHttpHandlerV1({origin,trust,clock:()=>now,loopBridge:{
-  mutate:async()=>{throw new LoopProviderRefusedV1(reason);},status:unused,viewDesk:unused,readApprovalDocument:unused,
+  mutate:async()=>{throw new LoopProviderRefusedV1(reason);},status:unused,viewDesk:unused,readApprovalDocument:unused,intakeSelection:unused,
  }});
  const response=await handler(request('/api/v1/projects/project:fixture/improvements/loop/request:fixture/start','POST',
   {expectedVersion:1,expectedRevision:1,runLinkId:'link:fixture',route:S4_ROUTE},key()));

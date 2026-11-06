@@ -382,8 +382,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(loopDatabase,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
+  let loopSelectionReady = false;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(loopDatabase,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders }, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders, selectionGuard: loopSources, selectionReady: () => loopSelectionReady }, clock) : undefined;
   // B6: the roster master and its export. Start seeds or reconciles once; requests wait for it.
   const loopRosterTools = options.loopBridge?.adapter.roster;
   const loopRoster = loopRosterTools ? new LoopRosterServiceV1(loopDatabase,
@@ -392,7 +393,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     await loopSources?.start();
     const result = await loopRoster?.start();
     if (loopSources && (!result?.seeded || !result.exported)) throw new Error("selection_source_unavailable");
-    if (loopSources) await loopSources.capture();
+    if (loopSources) { await loopSources.capture(); loopSelectionReady = true; }
     return result;
   })().catch(() => undefined);
   const loopSelection = loopPolicy && loopSources ? new LoopSelectionServiceV1(loopDatabase,

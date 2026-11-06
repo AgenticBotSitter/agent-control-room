@@ -248,14 +248,39 @@ export class LoopPolicyServiceV1 {
     }); } catch(error) { rethrowLoopPolicyErrorV1(error); }
   }
   async recordInputSources(tx: DatabaseSession, value: { requestId: string; inputVersion: number; defaultsSha256: string;
-    layerVersions: { project: number; selection: number }; waiverId: string | null }) {
-    await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
-      VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [this.scope.tenantId, value.requestId, value.inputVersion, value.defaultsSha256,
+    layerVersions: { project: number; selection: number }; waiverId: string | null; admissionKind: "native-p71" | "product-b8" }) {
+    if (!["native-p71", "product-b8"].includes(value.admissionKind)) throw new WebAccessError("service_unavailable");
+    const inserted = await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6) RETURNING input_version`, [this.scope.tenantId, value.requestId, value.inputVersion, value.defaultsSha256,
       JSON.stringify(value.layerVersions), value.waiverId]);
+    if (inserted.rows.length !== 1) throw new WebAccessError("service_unavailable");
+    const admission = await tx.query(`INSERT INTO control_loop_policy_input_admissions(tenant_id,request_id,input_version,admission_kind)
+      VALUES($1,$2,$3,$4) RETURNING input_version`, [this.scope.tenantId,value.requestId,value.inputVersion,value.admissionKind]);
+    if (admission.rows.length !== 1) throw new WebAccessError("service_unavailable");
+  }
+  /** Called only after the caller verifies the complete owned input lineage. */
+  async inputAdmissionKind(tx: DatabaseSession, requestId: string, inputVersion: number): Promise<"native-p71" | "product-b8" | "historical-native"> {
+    const rows = (await tx.query<{input_version: string | number; admission_kind: string}>(
+      `SELECT s.input_version,a.admission_kind FROM control_loop_policy_input_sources s LEFT JOIN control_loop_policy_input_admissions a USING(tenant_id,request_id,input_version) WHERE s.tenant_id=$1 AND s.request_id=$2`,
+      [this.scope.tenantId, requestId])).rows;
+    if (!rows.length) return "historical-native";
+    const first = rows.filter(row => Number(row.input_version) === 1), current = rows.filter(row => Number(row.input_version) === inputVersion);
+    if (first.length !== 1 || current.length !== 1 || !["native-p71", "product-b8"].includes(first[0]!.admission_kind)
+      || current[0]!.admission_kind !== first[0]!.admission_kind) throw new WebAccessError("service_unavailable");
+    return first[0]!.admission_kind as "native-p71" | "product-b8";
   }
   async copyInputSources(tx: DatabaseSession, value: { requestId: string; fromVersion: number; toVersion: number }) {
-    await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
+    const kind = await this.inputAdmissionKind(tx, value.requestId, value.fromVersion);
+    if (kind === "historical-native") return;
+    const inserted = await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
       SELECT tenant_id,request_id,$4,defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources
-      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3`, [this.scope.tenantId, value.requestId, value.fromVersion, value.toVersion]);
+      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3 RETURNING input_version`,
+      [this.scope.tenantId, value.requestId, value.fromVersion, value.toVersion]);
+    if (inserted.rows.length !== 1) throw new WebAccessError("service_unavailable");
+    const admission = await tx.query(`INSERT INTO control_loop_policy_input_admissions(tenant_id,request_id,input_version,admission_kind)
+      SELECT tenant_id,request_id,$4,admission_kind FROM control_loop_policy_input_admissions
+      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3 AND admission_kind=$5 RETURNING input_version`,
+      [this.scope.tenantId,value.requestId,value.fromVersion,value.toVersion,kind]);
+    if (admission.rows.length !== 1) throw new WebAccessError("service_unavailable");
   }
 }

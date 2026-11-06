@@ -332,6 +332,8 @@ test("P71 downgrade refuses retained run-edit commands before changing the schem
 
 test("P71 empty downgrade restores the merged down-chain schema", async t => {
   const f = await policyFixture(t);
+  await f.db.exec(await readFile('db/down/0317_control_loop_selection_acknowledgement_validate.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0316_control_loop_selection_acknowledgement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));
   await f.db.exec(await readFile('db/down/0312_control_loop_providers.sql','utf8'));
   await f.db.exec(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));

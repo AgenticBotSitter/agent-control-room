@@ -340,8 +340,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
   const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(loopDatabase,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
+  let loopSelectionReady = false;
   const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(loopDatabase,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders }, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders, selectionGuard: loopSources, selectionReady: () => loopSelectionReady }, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
@@ -354,7 +355,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     await loopSources?.start();
     const result = await loopRoster?.start();
     if (loopSources && (!result?.seeded || !result.exported)) throw new Error("selection_source_unavailable");
-    if (loopSources) await loopSources.capture();
+    if (loopSources) { await loopSources.capture(); loopSelectionReady = true; }
     return result;
   })().catch(() => undefined);
   const loopSelection = loopPolicy && loopSources ? new LoopSelectionServiceV1(loopDatabase,

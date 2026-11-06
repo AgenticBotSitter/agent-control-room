@@ -153,6 +153,66 @@ finally:s.doCleanups()
     const r=await promisify(execFile)(python,['-B','-c',script,loop],{cwd:scratch,env,timeout:60000,maxBuffer:131072});
     assert.match(r.stdout,/^CUSTODY LOCKED CLI PASS$/m);
   });
+  await t.test('current reader drift before claim zero writes',async()=>{
+    const {LoopPolicyServiceV1}=await import('../src/web/v1/loop-policy-service');
+    const {ImproveControlRoomLoopServiceV1}=await import('../src/web/v1/improve-control-room-loop-service');
+    await db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"templateId":"control-room"}'::jsonb) WHERE id=$1`,[f.project.projectId]);
+    const at=new Date(Date.now()-1000).toISOString(),expires=new Date(Date.now()+600000).toISOString();
+    const identity={...f.identity,tokenDigest:(await import('../src/security')).sha256Digest({fixture:'native-current-session'}),issuedAt:at,expiresAt:expires,verificationExpiresAt:expires};
+    await db.query('INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)',[scope.tenantId,identity.tokenDigest,'identity:web',at,expires]);
+    let checked=0,changed=false,guarded=0;
+    const originalAssert=coordinator.assertCurrent.bind(coordinator);
+    t.mock.method(coordinator,'assertCurrent',async(...args:Parameters<typeof originalAssert>)=>{guarded++;return originalAssert(...args);});
+    const policy=new LoopPolicyServiceV1(db,scope,{settingsText,checkSettings:async(text,context,execution)=>{
+      const result=await adapter.checkSettings!(text,context,execution);
+      checked++;const current=await roster.view(identity);
+      await roster.setOn(identity,'writer',{expectedVersion:current.version,on:false},'u81-native-source-drift-0001');changed=true;
+      return result;
+    }});
+    const service=new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:new Uint8Array(32).fill(65),adapter:custodyAdapter,policy,selectionReady:()=>true,selectionGuard:coordinator});
+    await assert.rejects(service.intakeSelection(identity,f.project.projectId,{
+      description:staged.intakeBinding.body.description,settingsEdits:JSON.stringify({overrides:{reviewFamily:false,standardFinal:false}})
+    },'u81-native-zero-claim-0001'));
+    assert.equal(checked,1,'real checker completed');assert.equal(changed,true,'real producer changed the source');assert.equal(guarded,1,'real current reader ran');
+    for(const table of ['control_loop_improvement_requests','control_loop_policy_input_sources','control_loop_improvement_commands'])
+      assert.equal((await db.query(`SELECT * FROM ${table}`)).rows.length,0,'real current reader drift leaves zero authority');
+  });
+  await t.test('current reader Start drift zero new claims or workers',async()=>{
+    const {LoopPolicyServiceV1}=await import('../src/web/v1/loop-policy-service');
+    const {ImproveControlRoomLoopServiceV1}=await import('../src/web/v1/improve-control-room-loop-service');
+    const {sha256Digest}=await import('../src/security');
+    const at=new Date(Date.now()-1000).toISOString(),expires=new Date(Date.now()+600000).toISOString();
+    const identity={...f.identity,tokenDigest:sha256Digest({fixture:'native-start-session'}),issuedAt:at,expiresAt:expires,verificationExpiresAt:expires};
+    await db.query('INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at) VALUES($1,$2,$3,$4,$5)',[scope.tenantId,identity.tokenDigest,'identity:web',at,expires]);
+    const currentRoster=await roster.view(identity);
+    await roster.setOn(identity,'writer',{expectedVersion:currentRoster.version,on:true},'u81-native-start-restore-0001');
+    let state:import('../src/web/v1/improve-control-room-loop-adapter').LoopEngineStatusV1,startWorkers=0,checks=0,changed=false;
+    const receipt=(commandId:string,b:import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1)=>({commandId,bindingDigest:sha256Digest(b),state:'accepted' as const,error:null,evidenceDigest:sha256Digest({commandId})});
+    // Recorded engine methods never invoke a worker; checker and source reader are real.
+    const recorded:import('../src/web/v1/improve-control-room-loop-adapter').LoopAdapterV1={...adapter,
+      available:()=>true,contract:{...adapter.contract,matchesSavedInput:(_r,o,i)=>o.settingsDigest===i.settingsSha256&&o.confirmation.sha256===i.requestSha256},
+      intake:async(id,b,text,fence,settings)=>{fence();state={run:{adapterId:b.adapterId,toolingRevision:b.toolingRevision,loopRunId:b.loopRunId,a2SchemaVersion:1},
+        revision:1,inputVersion:1,state:'draft',description:text,settingsSha256:loopByteHashV1(settings!),settingsDigest:loopByteHashV1(settings!),confirmation:null,approval:null,question:null,
+        progress:{step:'intake',completed:0,attention:'none'},receipts:[receipt(id,b)]};return structuredClone(state);},
+      confirmRequest:async(id,b,fence)=>{fence();state.state='ready';state.revision++;state.confirmation={path:'request.md',sha256:b.requestSha256,who:'owner',at:new Date().toISOString(),input_version:1};state.receipts.push(receipt(id,b));return structuredClone(state);},
+      status:async()=>structuredClone(state),start:async()=>{startWorkers++;throw Error('Start worker must not run');}};
+    const policy=new LoopPolicyServiceV1(db,scope,{settingsText,checkSettings:async(text,context,execution)=>{
+      const result=await adapter.checkSettings!(text,context,execution);checks++;
+      if(context?.mode==='admission'&&Object.hasOwn(context.binding.body,'runLinkId')){
+        const current=await roster.view(identity);await roster.setOn(identity,'writer',{expectedVersion:current.version,on:false},'u81-native-start-drift-0001');changed=true;
+      }
+      return result;
+    }});
+    const service=new ImproveControlRoomLoopServiceV1(db,scope,{integrityKey:new Uint8Array(32).fill(65),adapter:recorded,policy,selectionReady:()=>true,selectionGuard:coordinator});
+    const intake=await service.intakeSelection(identity,f.project.projectId,{description:'Synthetic Start drift',settingsEdits:JSON.stringify({overrides:{reviewFamily:false,standardFinal:false}})},'u81-native-start-intake-0001');
+    await service.mutate(identity,f.project.projectId,intake.requestId,'confirm',{expectedVersion:1,expectedRevision:1,requestSha256:loopByteHashV1('Synthetic Start drift'),settingsSha256:state!.settingsSha256},'u81-native-start-confirm-0001');
+    const status=await service.status(identity,f.project.projectId,intake.requestId);
+    const before=(await db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows;
+    await assert.rejects(service.mutate(identity,f.project.projectId,intake.requestId,'start',{expectedVersion:1,expectedRevision:2,runLinkId:status.request.runLink!.runLinkId},'u81-native-start-drift-claim-0001'));
+    assert.equal(checks,3);assert.equal(changed,true);assert.equal(startWorkers,0);
+    assert.equal((await db.query("SELECT * FROM control_loop_improvement_commands WHERE operation='start'")).rows.length,0);
+    assert.deepEqual((await db.query('SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind')).rows,before);
+  });
   assert.equal(durations.length,30);assert.equal(diagnostic,'');
   console.log('U81 transport stable_checks=30 max_ms='+Math.max(...durations).toFixed(3)+' cleanup=complete tooling='+staged.tooling);
 });
