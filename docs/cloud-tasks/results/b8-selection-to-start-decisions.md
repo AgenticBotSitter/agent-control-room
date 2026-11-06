@@ -188,4 +188,18 @@ T-SNAPSHOT accepted LOWs: inode-swap tests retain the same nonce (and the origin
 
 The assigned predecessor is a33e097af351374b525160198f1729563afc9750. The round-3 brief supplies isolated PG ports, migration IDs 0316/0317 and cached Squawk, resolving those round-2 inputs. The pre-edit audit found §4.4 still states application/native-public table counts 263/264 and forbids incrementing them, while the assigned predecessor's fixture/candidate/desk assertions agree on 264/265. Per the brief and cr-build step 1, stop before dependent implementation; preserve all current pins and landed migrations. The lead must reconcile the reviewed §4.4 baseline with the assigned predecessor before B1b/B2 resumes. No migration ID is consumed and no admission change is implemented in this round.
 
-Status: BLOCKED: spec section 4.4 catalog baseline mismatch (263/264 versus predecessor 264/265)
+
+## D26 — U81-B round-4 catalog baseline correction
+
+The lead resolves D25: section 4.4 predates the B6/B7 merge, which added one application table. Read its baseline as application 264 / native public 265. U81-B adds no catalog tables; preserve all existing table-count assertions exactly. Round 4 resumes B1b and B2 on af113aee3, with migration IDs 0316/0317 and reserved PG test ports supplied by the lead. This decision supersedes the round-3 baseline blocker.
+
+
+## D27 — U81-B round-4 exact-binding transport audit stop
+
+Sections 4.2 and 5 require the full checked journal binding and its unchanged digest in selectionDispatch through intake invocation and admissionExpectation. The assigned predecessor has a second intake envelope: when the report-only intakeDriver capability is configured, improve-control-room-loop-service.ts derives loopOwnedIntakeBindingSchemaV1 by adding tenantId, workspaceId, projectId, requestId, ownerIdentityId and settingsDigest to the journal binding, then dispatches that owned envelope. Its digest differs from the checked candidate. The existing adapter rejects a selectionDispatch whose bindingDigest differs from the invoked binding.
+
+The released T-TOOLS contract at 064eb462f3a055da9d3487502108a5292e21eeb0 also closes the selection binding shape. A pure synthetic probe against its actual selectionProjection/admissionExpectation accepts the plain candidate, accepts the owned envelope in the existing product schema, then refuses that owned envelope both with the original capsule and with a recomputed capsule digest. No checker, worker, provider or network is involved. This is conditional on intakeDriver; it is not a claim that the driver-free fixture path fails.
+
+The reviewed plan predates this report-only custody boundary. A lead-reviewed product/tools transport amendment must preserve both the exact checked selection binding and report-only intake custody/receipt/recovery authority. Do not strip custody, alter signed bytes, restamp/rebind after checking, guess a tools mapping or silently disable the capability. Per the explicit spec/code stop rule, round 4 removes its unfinished product/test/SQL/grant/pin edits. Only this baseline decision, the transport finding and evidence/status remain. B1b and B2 remain unbuilt; IDs 0316/0317 are not consumed.
+
+Status: BLOCKED: checked selection binding conflicts with existing report-only intake custody transport
