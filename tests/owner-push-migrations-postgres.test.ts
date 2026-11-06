@@ -400,7 +400,10 @@ test("WP-D15: released producer data survives provisioned upgrade and fresh sche
     'db/migrations/0312_control_loop_providers.sql',
     'db/migrations/0313_control_loop_provider_prices.sql',
     'db/migrations/0314_control_loop_policy_enforcement.sql',
-    'db/migrations/0315_control_loop_paid_admission.sql'],
+    'db/migrations/0315_control_loop_paid_admission.sql',
+    // U81-B adds selection acknowledgement and validates its retained provenance.
+    'db/migrations/0316_control_loop_selection_acknowledgement.sql',
+    'db/migrations/0317_control_loop_selection_acknowledgement_validate.sql'],
     'upgrade appends exactly the migrations added since the real earlier ledger, in order');
    assert.deepEqual(await rows(),[
     {action_inbox_id:'attention:upgrade:accepted',state:'delivered',attempt_count:1},

@@ -75,7 +75,9 @@ import { runB8HostGateV1,b8P71CasesV1,b8U81CasesV1,validateB8ProductTapV1,execut
 
 const expectedP71=['qualified fixture defaults','deterministic merged encoding','unknown model refusal'];
 const expectedU81=['ordinary eligible','bound acknowledged review','final builder refusal','manual refusal','chained refusal','recovery refusal',
-  'post-claim source drift zero workers','legacy no-context parity',...Array.from({length:30},(_,i)=>'stable admission '+String(i+1).padStart(2,'0'))];
+  'post-claim source drift zero workers','legacy no-context parity',...Array.from({length:30},(_,i)=>'stable admission '+String(i+1).padStart(2,'0')),
+  'custody unchanged checked binding and receipt','custody missing changed members refuse before invocation',
+  'custody locked CLI completed intake durable replay','current reader drift before claim zero writes','current reader Start drift zero new claims or workers'];
 function tap(parent,children){return ['TAP version 13','# Subtest: '+parent,...children.flatMap((c,i)=>['    # Subtest: '+c,'    ok '+(i+1)+' - '+c]),
   '    1..'+children.length,'ok 1 - '+parent,'1..1','# tests '+(children.length+1),'# fail 0','# cancelled 0','# skipped 0','# todo 0',''].join('\n');}
 function gateFixture(){
