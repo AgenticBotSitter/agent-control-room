@@ -5,7 +5,7 @@ import { z } from "zod";
 
 export class WebAccessError extends Error {
   constructor(readonly code: "authentication_required" | "access_denied" | "invalid_request" | "conflict"
-    | "queue_depth_exceeded" | "flagged_items_unresolved" | "not_found") {
+    | "queue_depth_exceeded" | "flagged_items_unresolved" | "not_found" | "service_unavailable" | "start_deferred_u81s") {
     super(code);
   }
 }

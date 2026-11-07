@@ -37,7 +37,8 @@ const engineSchema = z.object({ revision, state: z.enum(["draft", "ready", "runn
   question: z.object({ questionId: id, inputVersion: scalar, reportSha256: hash, owner: z.boolean(), changesInput: z.boolean() }).strict().nullable(),
   identity: z.literal("unverified") }).strict();
 export const loopDecisionStatusSchemaV1 = z.object({ schemaVersion: z.literal(1), request: loopImprovementRequestViewSchemaV1,
-  display: loopImprovementStatusSchemaV1, engine: engineSchema, decisions: loopImprovementDecisionsSchemaV1.optional() }).strict().superRefine((s, ctx) => {
+  display: loopImprovementStatusSchemaV1, engine: engineSchema,
+  selection: z.object({ requestSha256: hash, settingsSha256: hash, sameFamilyReview: z.boolean(), acceptanceCurrent: z.boolean() }).strict().optional(), decisions: loopImprovementDecisionsSchemaV1.optional() }).strict().superRefine((s, ctx) => {
   const r = s.request, d = s.display, e = s.engine, g = s.decisions?.gate;
   if (r.currentVersion !== d.localVersion
     || (r.runLink?.runLinkId ?? null) !== d.runLinkId || d.engineRevision !== e.revision

@@ -2,7 +2,7 @@ import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
-import { listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
+import { b8ExternalHostDiagnosticsV1, b8HostOnlyFileV1, b8MixedFileV1, b8P71SkipV1, listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
 import { runUnits } from "./run-scripts-keep-going.mjs";
 
 const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
@@ -163,6 +163,14 @@ function withoutPostgresTestEnvironment() {
   return environment;
 }
 
+// The snapshot proof requires an explicit range. Scope its default to this
+// child: U81's separate PG proof must retain its own 60520-60539 allowlist.
+function postgresTestEnvironment(test) {
+  if (test !== "tests/loop-selection-snapshot-postgres.test.ts"
+      || process.env.CONTROL_ROOM_PG_TEST_PORT_BASE !== undefined) return process.env;
+  return { ...process.env, CONTROL_ROOM_PG_TEST_PORT_BASE: "59310" };
+}
+
 function executeCommand(command, arguments_, root, environment = process.env) {
   const child = spawnSync(command, arguments_, { cwd: root, stdio: "inherit", env: environment });
   if (child.error) throw child.error;
@@ -188,9 +196,14 @@ function testSources(tests, repositoryRoot) {
   return tests.map(test => readFileSync(join(repositoryRoot, test), "utf8"));
 }
 
+export function partitionB8ExternalHostV1(result, tests) {
+  return { result: Array.isArray(result) ? result.filter(t => t !== b8HostOnlyFileV1) : result,
+    tests: tests.filter(t => t !== b8HostOnlyFileV1) };
+}
+
 function postgresTests(result, tests, repositoryRoot) {
   if (result !== "ALL" && !(result instanceof Array)) return [];
-  return tests.filter(test => postgresTestMarker.test(readFileSync(join(repositoryRoot, test), "utf8")));
+  return tests.filter(test => test !== b8HostOnlyFileV1).filter(test => postgresTestMarker.test(readFileSync(join(repositoryRoot, test), "utf8")));
 }
 
 function guardedPostgresTests(result, tests, repositoryRoot) {
@@ -213,13 +226,16 @@ function guardedPostgresTests(result, tests, repositoryRoot) {
 export const NODE_TEST_TIMEOUT_MS = 1_200_000;
 
 function nodeTestCommand(test, repositoryRoot) {
-  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", test];
+  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", ...(test === b8MixedFileV1 ? [b8P71SkipV1] : []), test];
   if (testSources([test], repositoryRoot).some(source => squawkTestMarker.test(source)))
     return ["npm", ["exec", "--yes", "--package=squawk-cli@2.61.0", "--", process.execPath, ...nodeArguments]];
   return [process.execPath, nodeArguments];
 }
 
 export function affectedTestCommands(result, tests, repositoryRoot = process.cwd()) {
+  b8ExternalHostDiagnosticsV1();
+  ({ result, tests } = partitionB8ExternalHostV1(result, tests));
+  if (tests.length === 0) return [];
   const sources = result === "ALL" ? [] : testSources(tests, repositoryRoot);
   const needsVpsBuild = result === "ALL" || sources.some(source => source.includes("dist-vps"));
   const needsDemoBuild = result === "ALL" || sources.some(source => source.includes("dist-contributor"));
@@ -283,6 +299,7 @@ export function deferralMessage(result, selectedCount, totalTestCount) {
 // the PostgreSQL-marked subset itself (see runSelectedTests), and that subset
 // needs the job's PostgreSQL setup step to have run.
 export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) {
+  ({ result, tests } = partitionB8ExternalHostV1(result, tests));
   const defer = shouldDeferToFullSuite(result, listTestFiles(repositoryRoot).length);
   return [
     `all=${result === "ALL"}`,
@@ -294,6 +311,8 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
 
 export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
   postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform) {
+  b8ExternalHostDiagnosticsV1();
+  ({ result, tests } = partitionB8ExternalHostV1(result, tests));
   if (result === "DOCS_ONLY") {
     console.log(noTestsAffectedMessage());
     return 0;
@@ -341,7 +360,9 @@ function hasSkippedTests(output) {
 
 export function runAffectedTests(result, tests, repositoryRoot, execute = executeCommand,
   postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
-  if (result === "DOCS_ONLY") return 0;
+  b8ExternalHostDiagnosticsV1();
+  ({ result, tests } = partitionB8ExternalHostV1(result, tests));
+  if (result === "DOCS_ONLY" || tests.length === 0) return 0;
   if (requiresPostgres(result, tests, repositoryRoot) && !postgresAvailable()) {
     console.error("Selected test plan requires PostgreSQL 17 binaries, but PG_BIN does not contain initdb, pg_ctl, postgres, and psql.");
     return 1;
@@ -351,7 +372,7 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   const nonPgTests = guardedTests.filter(test => !pgTests.includes(test));
   const testCommands = [
     ...nonPgTests.map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: false })),
-    ...pgTests.map(test => ({ tests: [test], environment: process.env, exempt: false })),
+    ...pgTests.map(test => ({ tests: [test], environment: postgresTestEnvironment(test), exempt: false })),
     ...tests.filter(test => skippedTestExemptions.has(test)).map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: true })),
   ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);
@@ -385,8 +406,10 @@ function main() {
   const githubOutput = process.argv.includes("--github-output");
   const baseRef = requestedBaseRef(process.argv.slice(2));
   const root = process.cwd();
-  const result = affectedTests(root, changedFiles(root, baseRef));
-  const tests = result === "ALL" ? listTestFiles(root) : result === "DOCS_ONLY" ? [] : result;
+  let result = affectedTests(root, changedFiles(root, baseRef));
+  let tests = result === "ALL" ? listTestFiles(root) : result === "DOCS_ONLY" ? [] : result;
+  b8ExternalHostDiagnosticsV1();
+  ({ result, tests } = partitionB8ExternalHostV1(result, tests));
   if (githubOutput) {
     if (!process.env.GITHUB_OUTPUT) throw new Error("--github-output requires GITHUB_OUTPUT");
     appendFileSync(process.env.GITHUB_OUTPUT, `${selectionOutputs(result, tests, root)}\n`);

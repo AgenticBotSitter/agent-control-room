@@ -5,8 +5,15 @@ import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { composeLoopSettingsV1, parseLoopSettingsV1, parseSuppliedLoopSettingsV1, normalizeLoopLockedPathsV1, validateLoopLockedPathsV1, differingLoopLockedPathsV1 } from "./loop-policy-compose";
+import { normalizeSelectionRunEditsV1, type LoopSelectionProjectionV1 } from "./loop-selection-wire";
+import type { LoopBridgeBindingV1 } from "../../improve-control-room/v1/schemas";
 
 export type LoopPolicyCheckV1 = { eligible: boolean; reasons: { code: string; explanation: string }[] };
+export type LoopSelectionCheckContextV1 = Readonly<{ mode: "preview"; sameFamilyIntent: boolean }>
+  | Readonly<{ mode: "admission"; binding: LoopBridgeBindingV1; commandId: string }>;
+export type LoopSelectionCheckExecutionV1 = Readonly<{ signal: AbortSignal; timeoutMs: number }>;
+import type { SelectionSnapshotV1 } from "./loop-selection-service";
+export type LoopPolicyCheckWithV1 = LoopPolicyCheckV1 & { projection?: LoopSelectionProjectionV1; snapshot?: SelectionSnapshotV1 };
 export class LoopPolicyRefusedV1 extends Error {
   constructor(readonly reasons: LoopPolicyCheckV1["reasons"]) { super("loop_policy_refused"); }
 }
@@ -33,7 +40,7 @@ export function rethrowLoopPolicyErrorV1(error: unknown): never {
 export class LoopPolicyServiceV1 {
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    private readonly tools: { readonly settingsText: string; checkSettings?(text: string): Promise<LoopPolicyCheckV1> },
+    private readonly tools: { readonly settingsText: string; checkSettings?(text: string, context?: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> },
     clock: () => number = Date.now,
     private readonly providers?: { revalidateSettings(tx: DatabaseSession, text: string): Promise<void> }) { this.#authority = new WebSessionAuthority(db, scope, clock, "loop_policy"); }
 
@@ -63,6 +70,7 @@ export class LoopPolicyServiceV1 {
     return rows;
   }
   #compose(rows: Partial<Record<Layer, LayerRow>>, runEdits?: string, replacement?: { layer: Layer; settings: string }): LoopPolicySnapshotV1 {
+    if (runEdits !== undefined) runEdits = normalizeSelectionRunEditsV1(runEdits);
     const defaultsText = this.tools.settingsText;
     const composed = composeLoopSettingsV1({ defaultsText,
       storedLayers: { project: rows.project?.settings_text, selection: rows.selection?.settings_text },
@@ -84,6 +92,19 @@ export class LoopPolicyServiceV1 {
     if (!Object.hasOwn(parseLoopSettingsV1(text), "providerRoute")) return;
     if (!this.providers) throw new LoopPolicyRefusedV1([{ code: "PROVIDER_UNAVAILABLE", explanation: "Provider validation unavailable" }]);
     await this.providers.revalidateSettings(tx, text);
+  }
+  /** Caller supplies a consistent read transaction; no layer write locks for preview. */
+  async snapshotRead(tx: DatabaseSession, projectId: string, runEdits?: string): Promise<LoopPolicySnapshotV1> {
+    return this.#compose(await this.#layers(tx, projectId, false), runEdits);
+  }
+  async checkWith(text: string, context: LoopSelectionCheckContextV1, execution?: LoopSelectionCheckExecutionV1): Promise<LoopPolicyCheckWithV1> {
+    const entered = performance.now(), checker = this.tools.checkSettings;
+    if (!checker) throw new Error("loop_policy_check_unavailable");
+    if (!execution) return checker.call(this.tools, text, context);
+    const timeoutMs = Math.floor(execution.timeoutMs - (performance.now() - entered));
+    if (!Number.isSafeInteger(execution.timeoutMs) || timeoutMs <= 0 || execution.signal.aborted)
+      throw new Error("loop_policy_check_unavailable");
+    return checker.call(this.tools, text, context, { signal: execution.signal, timeoutMs });
   }
   assertSnapshot(before: LoopPolicySnapshotV1, after: LoopPolicySnapshotV1) {
     if (before.defaultsSha256 !== after.defaultsSha256 || before.layerVersions.project !== after.layerVersions.project
@@ -227,14 +248,39 @@ export class LoopPolicyServiceV1 {
     }); } catch(error) { rethrowLoopPolicyErrorV1(error); }
   }
   async recordInputSources(tx: DatabaseSession, value: { requestId: string; inputVersion: number; defaultsSha256: string;
-    layerVersions: { project: number; selection: number }; waiverId: string | null }) {
-    await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
-      VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [this.scope.tenantId, value.requestId, value.inputVersion, value.defaultsSha256,
+    layerVersions: { project: number; selection: number }; waiverId: string | null; admissionKind: "native-p71" | "product-b8" }) {
+    if (!["native-p71", "product-b8"].includes(value.admissionKind)) throw new WebAccessError("service_unavailable");
+    const inserted = await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6) RETURNING input_version`, [this.scope.tenantId, value.requestId, value.inputVersion, value.defaultsSha256,
       JSON.stringify(value.layerVersions), value.waiverId]);
+    if (inserted.rows.length !== 1) throw new WebAccessError("service_unavailable");
+    const admission = await tx.query(`INSERT INTO control_loop_policy_input_admissions(tenant_id,request_id,input_version,admission_kind)
+      VALUES($1,$2,$3,$4) RETURNING input_version`, [this.scope.tenantId,value.requestId,value.inputVersion,value.admissionKind]);
+    if (admission.rows.length !== 1) throw new WebAccessError("service_unavailable");
+  }
+  /** Called only after the caller verifies the complete owned input lineage. */
+  async inputAdmissionKind(tx: DatabaseSession, requestId: string, inputVersion: number): Promise<"native-p71" | "product-b8" | "historical-native"> {
+    const rows = (await tx.query<{input_version: string | number; admission_kind: string}>(
+      `SELECT s.input_version,a.admission_kind FROM control_loop_policy_input_sources s LEFT JOIN control_loop_policy_input_admissions a USING(tenant_id,request_id,input_version) WHERE s.tenant_id=$1 AND s.request_id=$2`,
+      [this.scope.tenantId, requestId])).rows;
+    if (!rows.length) return "historical-native";
+    const first = rows.filter(row => Number(row.input_version) === 1), current = rows.filter(row => Number(row.input_version) === inputVersion);
+    if (first.length !== 1 || current.length !== 1 || !["native-p71", "product-b8"].includes(first[0]!.admission_kind)
+      || current[0]!.admission_kind !== first[0]!.admission_kind) throw new WebAccessError("service_unavailable");
+    return first[0]!.admission_kind as "native-p71" | "product-b8";
   }
   async copyInputSources(tx: DatabaseSession, value: { requestId: string; fromVersion: number; toVersion: number }) {
-    await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
+    const kind = await this.inputAdmissionKind(tx, value.requestId, value.fromVersion);
+    if (kind === "historical-native") return;
+    const inserted = await tx.query(`INSERT INTO control_loop_policy_input_sources(tenant_id,request_id,input_version,defaults_sha256,layer_versions,waiver_id)
       SELECT tenant_id,request_id,$4,defaults_sha256,layer_versions,waiver_id FROM control_loop_policy_input_sources
-      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3`, [this.scope.tenantId, value.requestId, value.fromVersion, value.toVersion]);
+      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3 RETURNING input_version`,
+      [this.scope.tenantId, value.requestId, value.fromVersion, value.toVersion]);
+    if (inserted.rows.length !== 1) throw new WebAccessError("service_unavailable");
+    const admission = await tx.query(`INSERT INTO control_loop_policy_input_admissions(tenant_id,request_id,input_version,admission_kind)
+      SELECT tenant_id,request_id,$4,admission_kind FROM control_loop_policy_input_admissions
+      WHERE tenant_id=$1 AND request_id=$2 AND input_version=$3 AND admission_kind=$5 RETURNING input_version`,
+      [this.scope.tenantId,value.requestId,value.fromVersion,value.toVersion,kind]);
+    if (admission.rows.length !== 1) throw new WebAccessError("service_unavailable");
   }
 }

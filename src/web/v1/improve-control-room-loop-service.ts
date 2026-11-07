@@ -1,6 +1,11 @@
+import { withDatabaseOperationSignal } from "../../persistence/operation-signal";
+import { bindLoopSelectionSourceDeadlineV1, registerLoopSelectionSourceTransactionAliasV1, LoopSelectionSnapshotCoordinatorV1 } from "./loop-selection-snapshot";
+import { decodeSelectionEditsV1, loopSelectionSchemaV1, loopSelectionCheckSchemaV1, loopSelectionProjectionSchemaV1 } from "./loop-selection-wire";
+import type { LoopSelectionSnapshotGuardV1, LoopSelectionDispatchV1 } from "./loop-selection-service";
+import { loopSelectionAcknowledgementTimestampV1 } from "../../improve-control-room/v1/schemas";
 import { LoopProviderServiceV1 } from "./loop-provider-service";
 import { parseLoopSettingsV1 } from "./loop-policy-compose";
-import { LoopPolicyServiceV1, rethrowLoopPolicyErrorV1, type LoopPolicySnapshotV1 } from "./loop-policy-service";
+import { LoopPolicyServiceV1, LoopPolicyRefusedV1, rethrowLoopPolicyErrorV1, type LoopPolicySnapshotV1 } from "./loop-policy-service";
 import { LoopCandidatePublisherV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createImproveControlRoomLoopFinalizerV1, finalizationEnabledV1, loopFinalizationTargetSchemaV1,
   rememberLoopFinalizationFailureV1, effectiveLoopFinalizationReasonV1, loopFinalizationFailureReasonV1, LoopFinalizationFailureV1,
@@ -42,7 +47,7 @@ const unavailable = () => new Error("loop_bridge_contract_unavailable");
  * key, so a composition with pipelines must use one key for both. */
 export const loopKeyMatchesLegacyKeyV1 = (loopKey: Uint8Array, legacyKey: Uint8Array) =>
   loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);
-export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; policy?: LoopPolicyServiceV1; providers?:LoopProviderServiceV1; admissionFreshnessMs?: number; loopCandidates?: LoopCandidateConfigurationV1 };
+export type LoopBridgeConfigurationV1 = { integrityKey: Uint8Array; adapter: LoopAdapterV1; policy?: LoopPolicyServiceV1; selectionGuard?: LoopSelectionSnapshotGuardV1; selectionReady?: () => boolean; providers?:LoopProviderServiceV1; admissionFreshnessMs?: number; loopCandidates?: LoopCandidateConfigurationV1 };
 type Lineage = Awaited<ReturnType<ImproveControlRoomDeskServiceV1["loopBridgeLineage"]>>;
 
 /** Owner authority and an append-only, signed one-attempt journal. A committed
@@ -54,6 +59,8 @@ export class ImproveControlRoomLoopServiceV1 {
   readonly #freshness: number;
   readonly #policy: LoopPolicyServiceV1;
   readonly #providers:LoopProviderServiceV1 | undefined;
+  readonly #selectionReady: (() => boolean) | undefined;
+  readonly #selectionGuard: LoopSelectionSnapshotGuardV1 | undefined;
   readonly #publisher: LoopCandidatePublisherV1;
   readonly #monitoring = new WeakMap<LoopDecisionStatusV1, LoopMonitoringStatusV1>();
   readonly #swept = new Set<string>();
@@ -62,7 +69,7 @@ export class ImproveControlRoomLoopServiceV1 {
     configuration: LoopBridgeConfigurationV1, private readonly clock: () => number = Date.now) {
     if (!(configuration.integrityKey instanceof Uint8Array) || configuration.integrityKey.length !== 32) throw unavailable();
     this.#key = Uint8Array.from(configuration.integrityKey); this.#adapter = configuration.adapter;
-    this.#providers = configuration.providers;
+    this.#selectionReady = configuration.selectionReady; this.#providers = configuration.providers; this.#selectionGuard = configuration.selectionGuard;
     this.#policy = configuration.policy ?? new LoopPolicyServiceV1(db, scope, this.#adapter, clock, this.#providers);
     this.#freshness = configuration.admissionFreshnessMs ?? 5000;
     if (!Number.isSafeInteger(this.#freshness) || this.#freshness < 1 || this.#freshness > 5000) throw unavailable();
@@ -82,6 +89,13 @@ export class ImproveControlRoomLoopServiceV1 {
       || (row.entry_kind === "claim") !== (row.result === null)
       || !loopBridgeBodiesV1[row.operation].safeParse(row.binding.body).success
       || (row.result && Buffer.byteLength(JSON.stringify(row.result), "utf8") > 65536)) throw new Error("loop_command_integrity_failed");
+    const ack = row.binding.sameFamilyAcknowledgement;
+    if (ack && (!["intake", "confirm", "start"].includes(row.operation)
+      || row.operation === "intake" && row.binding.body.acceptSameFamilyRisk !== true
+      || loopSelectionAcknowledgementTimestampV1(ack.accepted_at)! > Date.parse(row.created_at)
+      || row.entry_kind === "claim" && row.binding.body.acceptSameFamilyRisk === true
+        && Date.parse(row.created_at) - loopSelectionAcknowledgementTimestampV1(ack.accepted_at)! >= 5000))
+      throw new Error("loop_command_integrity_failed");
     return row;
   }
   async #insert(tx: DatabaseSession, value: Omit<Row, "record_digest" | "auth_tag">) {
@@ -113,6 +127,10 @@ export class ImproveControlRoomLoopServiceV1 {
     // admission envelope without changing the persisted command schema.
     return loopOwnedIntakeBindingSchemaV1.parse({...claim.binding,...this.scope,projectId:claim.project_id,
       requestId:claim.request_id,ownerIdentityId:claim.owner_identity_id,settingsDigest:claim.binding.settingsSha256});
+  }
+  #intakeCustody(claim: Row) {
+    return loopIntakeCustodySchemaV1.parse({...this.scope, projectId:claim.project_id, requestId:claim.request_id,
+      ownerIdentityId:claim.owner_identity_id, localVersion:claim.binding.localVersion, settingsDigest:claim.binding.settingsSha256});
   }
   #pins(binding: LoopBridgeBindingV1, operation: LoopBridgeOperationV1) {
     if (binding.adapterId !== this.#adapter.adapterId || binding.toolingRevision !== this.#adapter.toolingRevision
@@ -295,16 +313,21 @@ export class ImproveControlRoomLoopServiceV1 {
       ||!local.link||local.authorization||snapshot.claims.some(row=>['confirm','start','stop'].includes(row.operation)))return blocked;
     const parsed=loopOwnedIntakeBindingSchemaV1.safeParse(this.#intakeEngineBinding(claim));
     if(!parsed.success)return blocked;
-    const b=parsed.data;
-    if(b.tenantId!==this.scope.tenantId||b.workspaceId!==this.scope.workspaceId||b.projectId!==target.projectId
-      ||b.requestId!==target.requestId||b.ownerIdentityId!==target.ownerIdentityId||b.localVersion!==Number(local.input.version)
+    const owned=parsed.data;
+    let b: LoopBridgeBindingV1 | typeof owned = claim.binding;
+    if(owned.tenantId!==this.scope.tenantId||owned.workspaceId!==this.scope.workspaceId||owned.projectId!==target.projectId
+      ||owned.requestId!==target.requestId||owned.ownerIdentityId!==target.ownerIdentityId||b.localVersion!==Number(local.input.version)
       ||b.requestSha256!==local.input.request_sha256||b.settingsSha256!==local.input.settings_sha256
-      ||b.settingsDigest!==b.settingsSha256||b.runLinkId!==null||b.authorizationId!==null
+      ||b.runLinkId!==null||b.authorizationId!==null
       ||b.loopRunId!==this.#run(local).loopRunId)return blocked;
     const status=await this.#adapter.status(b.loopRunId);
+    // Retained admissions used the owned envelope. Select that branch only
+    // from its exact accepted receipt; new admissions keep the signed binding.
+    if (!status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(b)&&r.state==='accepted')
+      && status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(owned)&&r.state==='accepted')) b=owned;
     if(status.state!=="draft"||status.confirmation||status.approval||status.question
       ||!equal(status.run,this.#run(local))||status.settingsSha256!==b.settingsSha256
-      ||status.settingsDigest!==b.settingsDigest||loopByteHashV1(status.description)!==b.requestSha256
+      ||status.settingsDigest!==b.settingsSha256||loopByteHashV1(status.description)!==b.requestSha256
       ||!status.receipts.some(r=>r.commandId===claim.command_id&&r.bindingDigest===sha256Digest(b)&&r.state==='accepted'))return blocked;
     const raw=await driver.inspect(b.loopRunId);
     if(Buffer.byteLength(JSON.stringify(raw),"utf8")>65536)throw unavailable();
@@ -315,7 +338,7 @@ export class ImproveControlRoomLoopServiceV1 {
     const receipt=o.receipt;
     const binding=loopIntakeDriverBindingSchemaV1.parse({schemaVersion:1,...loopIntakeCustodySchemaV1.parse({
       ...this.scope,projectId:target.projectId,requestId:target.requestId,ownerIdentityId:target.ownerIdentityId,
-      localVersion:b.localVersion,settingsDigest:b.settingsDigest}),runLinkId:local.link.id,run:status.run,
+      localVersion:b.localVersion,settingsDigest:b.settingsSha256}),runLinkId:local.link.id,run:status.run,
       expectedRevision:receipt?.expected_revision??o.revision,inputVersion:o.inputVersion,
       requestSha256:b.requestSha256,settingsSha256:b.settingsSha256,intakeCommandId:claim.command_id,
       intakeBinding:b,intakeBindingDigest:sha256Digest(b),completedResult:receipt?.completed_result??o.completedResult});
@@ -356,7 +379,7 @@ export class ImproveControlRoomLoopServiceV1 {
   async #statusWithEngine(identity: VerifiedWebIdentity, projectId: string, requestId: string) {
     if (!id.safeParse(projectId).success || !id.safeParse(requestId).success) throw new WebAccessError("invalid_request");
     // Authorization and signed lineage are checked before any external read. GET never adopts or reconciles.
-    const { lineage, startClaim, startResult, mayWrite, pending, intakeClaim, intakeResult } = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
+    const { lineage, startClaim, startResult, mayWrite, pending, intakeClaim, intakeResult, provenance } = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
       const lineage = await reader.loopBridgeLineage(tx, projectId, requestId, actor.id);
       const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
         WHERE tenant_id=$1 AND request_id=$2 AND operation='start' AND entry_kind='claim'`, [this.scope.tenantId, requestId])).rows[0];
@@ -379,9 +402,12 @@ export class ImproveControlRoomLoopServiceV1 {
         this.#pins(intakeClaim.binding, "intake");
         if (intakeClaim.project_id !== projectId || intakeClaim.owner_identity_id !== actor.id) throw unavailable();
       }
+      let provenance: "native-p71" | "product-b8" | "historical-native" | "unavailable";
+      try { provenance = await this.#policy.inputAdmissionKind(tx, requestId, Number(lineage.input.version)); }
+      catch { provenance = "unavailable"; }
       const mayWrite = actor.can("tasks.propose", projectId, true, "high");
       return { lineage, pending, startClaim, startResult: startClaim ? await this.#result(tx, startClaim) : undefined, mayWrite,
-        intakeClaim, intakeResult: intakeClaim ? await this.#result(tx, intakeClaim) : undefined };
+        intakeClaim, intakeResult: intakeClaim ? await this.#result(tx, intakeClaim) : undefined, provenance };
     });
     if (!lineage.link && !startClaim && intakeClaim) {
       const b = intakeClaim.binding;
@@ -412,7 +438,7 @@ export class ImproveControlRoomLoopServiceV1 {
         settingsSha256: lineage.view.settingsSha256, settingsDigest: lineage.view.settingsSha256,
         confirmation: null, approval: null, question: null, progress, receipts: [] };
       return { engine, view: loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
-        decisions: { gate: inProgress ? null : { kind: "blocked", code: "UNAVAILABLE", message }, observedAt: display.observedAt },
+        decisions: { gate: provenance === "unavailable" ? unavailableLoopGate() : inProgress ? null : { kind: "blocked", code: "UNAVAILABLE", message }, observedAt: display.observedAt },
         engine: { revision: engine.revision, state: engine.state, draft: engine.description, requestSha256: lineage.view.requestSha256,
           settingsSha256: engine.settingsSha256, inputVersion: engine.inputVersion, confirmation: null, approval: null, question: null, progress, identity: "unverified" } }) };
     }
@@ -474,8 +500,30 @@ export class ImproveControlRoomLoopServiceV1 {
         requestedModel: current.progress.requestedModel ?? null, observedModel: current.progress.observedModel ?? null,
         identityVerified: current.progress.identityVerified === true && !!current.progress.observedModel, repairCount: current.progress.repairCount ?? null },
       attention, observedAt: new Date(this.clock()).toISOString() });
-    const projected = loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display,
-      decisions: loopImprovementDecisionsSchemaV1.parse(recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
+    let selection: LoopDecisionStatusV1["selection"];
+    let selectionUnavailable = provenance === "unavailable";
+    if (provenance === "product-b8") {
+      try {
+        const target = await this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage: reader }) => {
+          const fresh = await reader.loopBridgeLineage(tx, projectId, requestId, actor.id);
+          if (!equal(JSON.parse(JSON.stringify(fresh)), JSON.parse(JSON.stringify(lineage)))) throw conflict();
+          return this.#selectionTargetFrom(tx, projectId, requestId, actor.id, fresh, current, confirmationCurrent ? "start" : "confirm");
+        });
+        selection = { requestSha256: target.requestSha256, settingsSha256: target.settingsSha256,
+          sameFamilyReview: target.sameFamilyReview, acceptanceCurrent: target.acceptanceCurrent };
+        if (selection.sameFamilyReview && !selection.acceptanceCurrent) display.canStart = false;
+      } catch { selectionUnavailable = true; }
+    }
+    if (provenance === "product-b8") {
+      display.canStart = false;
+      // Preserve recovery/Stop attention on runs with a retained Start claim.
+      if (!startClaim && !display.attention) display.attention = { code: "start_deferred_u81s",
+        message: "Starting this saved selection is unavailable until subscription-launcher support is released.",
+        nextAction: "Keep the saved request and confirmation until starting is supported." };
+    }
+    if (selectionUnavailable) display.canStart = false;
+    const projected = loopDecisionStatusSchemaV1.parse({ schemaVersion: 1, request: lineage.view, display, ...(selection ? { selection } : {}),
+      decisions: loopImprovementDecisionsSchemaV1.parse(selectionUnavailable ? { gate: unavailableLoopGate(), observedAt: display.observedAt } : recoveryTerminal ? { gate: null, observedAt: display.observedAt } : recoveryUnavailable ? { gate: recoveryInputChanged ? { kind: 'blocked', code: 'INPUT_CHANGED', message: 'The saved run inputs have changed. Check the saved request.' } : unavailableLoopGate(), observedAt: display.observedAt } : current.decisions ?? { gate: unavailableLoopGate(), observedAt: display.observedAt }), engine: { revision: current.revision, state: current.state,
       draft: current.description, requestSha256: loopByteHashV1(current.description), settingsSha256: current.settingsSha256,
       inputVersion: current.inputVersion, confirmation: current.confirmation ? { sha256: current.confirmation.sha256,
         at: current.confirmation.at, who: current.confirmation.who, inputVersion: current.confirmation.input_version } : null,
@@ -659,11 +707,233 @@ export class ImproveControlRoomLoopServiceV1 {
   }
   async mutate(identity: VerifiedWebIdentity, projectId: string, requestId: string | null,
     operation: LoopBridgeOperationV1, input: unknown, idempotencyKey: string) {
-    try { return await this.#mutate(identity, projectId, requestId, operation, input, idempotencyKey); }
+    try { return await this.#mutate(identity, projectId, requestId, operation, input, idempotencyKey, requestId === null ? "native-p71" : "retained"); }
     catch (error) { rethrowLoopPolicyErrorV1(error); }
   }
+  async #selectionTargetFrom(tx: DatabaseSession, projectId: string, requestId: string, ownerId: string,
+    local: Lineage, observed: LoopEngineStatusV1, operation: "confirm" | "start") {
+    if (await this.#policy.inputAdmissionKind(tx, requestId, Number(local.input.version)) !== "product-b8") throw new WebAccessError("service_unavailable");
+    this.#current(observed, local, { expectedVersion: Number(local.input.version), expectedRevision: observed.revision }, operation === "start");
+    if (loopByteHashV1(local.input.settings_text) !== local.input.settings_sha256
+      || observed.settingsSha256 !== local.input.settings_sha256) throw conflict();
+    const decoded = decodeSelectionEditsV1(local.input.settings_text);
+    const normalized = operation === "confirm" && observed.description !== local.input.description;
+    const target = { loopRunId: observed.run.loopRunId, localVersion: Number(local.input.version) + (normalized ? 1 : 0),
+      requestSha256: normalized ? loopByteHashV1(observed.description) : local.input.request_sha256, settingsSha256: local.input.settings_sha256 };
+    const accepted = await this.#acceptedSelection(tx, projectId, requestId, ownerId, target);
+    return { settingsText: local.input.settings_text, targetLocalVersion: target.localVersion,
+      requestSha256: target.requestSha256, settingsSha256: target.settingsSha256, engineInputVersion: observed.inputVersion,
+      engineRevision: observed.revision, sameFamilyReview: decoded.overrides.reviewFamily, acceptanceCurrent: !!accepted };
+  }
+  /** Server-only, read-only target for the later saved-preview transport. */
+  async selectionTarget(identity: VerifiedWebIdentity, projectId: string, requestId: string, operation: "confirm" | "start") {
+    if (!id.safeParse(projectId).success || !id.safeParse(requestId).success || !["confirm", "start"].includes(operation)) throw new WebAccessError("invalid_request");
+    const before = await this.#desk.loopBridgeTransaction(identity, projectId, false,
+      ({ tx, actor, lineage }) => lineage.loopBridgeLineage(tx, projectId, requestId, actor.id));
+    const observed = await this.#adapter.status(this.#run(before).loopRunId);
+    return this.#desk.loopBridgeTransaction(identity, projectId, false, async ({ tx, actor, lineage }) => {
+      const local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
+      if (!equal(JSON.parse(JSON.stringify(before)), JSON.parse(JSON.stringify(local)))) throw conflict();
+      return this.#selectionTargetFrom(tx, projectId, requestId, actor.id, local, observed, operation);
+    });
+  }
+  async intakeSelection(identity: VerifiedWebIdentity, projectId: string, input: unknown, idempotencyKey: string) {
+    try { return await this.#mutate(identity, projectId, null, "intake", input, idempotencyKey, "product-b8"); }
+    catch (error) { rethrowLoopPolicyErrorV1(error); }
+  }
+  async #assertIntakeKind(tx: DatabaseSession, local: Lineage, kind: "native-p71" | "product-b8") {
+    const saved = await this.#policy.inputAdmissionKind(tx, local.root.id, Number(local.input.version));
+    if (saved === "historical-native") {
+      if (kind === "product-b8") throw new WebAccessError("service_unavailable");
+    } else if (saved !== kind) throw conflict();
+  }
+  async #acceptedSelection(tx: DatabaseSession, projectId: string, requestId: string, ownerId: string,
+    binding: Pick<LoopBridgeBindingV1, "loopRunId" | "localVersion" | "requestSha256" | "settingsSha256">) {
+    const claims = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands WHERE tenant_id=$1
+      AND request_id=$2 AND entry_kind='claim' AND operation IN ('intake','confirm') ORDER BY created_at,command_id`,
+    [this.scope.tenantId, requestId])).rows;
+    let accepted: LoopBridgeBindingV1["sameFamilyAcknowledgement"];
+    for (const raw of claims) {
+      const claim = this.#verify(raw); this.#pins(claim.binding, claim.operation);
+      if (claim.project_id !== projectId || claim.owner_identity_id !== ownerId) throw new Error("loop_command_integrity_failed");
+      const b = claim.binding, result = await this.#result(tx, claim);
+      if (result?.result?.state === "accepted" && b.sameFamilyAcknowledgement
+        && b.loopRunId === binding.loopRunId && b.localVersion === binding.localVersion
+        && b.requestSha256 === binding.requestSha256 && b.settingsSha256 === binding.settingsSha256)
+        accepted = b.sameFamilyAcknowledgement;
+    }
+    return accepted;
+  }
+  async #selectionMutate(identity: VerifiedWebIdentity, projectId: string, requestId: string | null,
+    operation: "intake" | "confirm" | "start", body: Record<string, unknown>, key: string) {
+    // Preparation reads authority and exact-key replay before any allocation or checker.
+    const before = await this.#desk.loopBridgeTransaction(identity, projectId, true, async ({ tx, actor, lineage }) => {
+      const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands WHERE tenant_id=$1
+        AND owner_identity_id=$2 AND idempotency_key=$3 AND entry_kind='claim'`, [this.scope.tenantId, actor.id, key])).rows[0];
+      if (raw) {
+        const prior = this.#verify(raw);
+        if (prior.project_id !== projectId || prior.operation !== operation || requestId !== null && prior.request_id !== requestId
+          || !equal(prior.binding.body, body)) throw conflict();
+        const saved = await lineage.loopBridgeLineage(tx, projectId, prior.request_id, actor.id);
+        if (operation === "intake") await this.#assertIntakeKind(tx, saved, "product-b8"); this.#pins(prior.binding, operation);
+        return { replay: { claim: prior, result: await this.#result(tx, prior), replayed: true }, owner: actor.id };
+      }
+      const local = requestId ? await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id) : undefined;
+      if (local && await this.#policy.inputAdmissionKind(tx, local.root.id, Number(local.input.version)) !== "product-b8") throw unavailable();
+      const policy = !requestId ? await this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined, body.waiverId as string | undefined) : undefined;
+      return { local, policy, owner: actor.id };
+    });
+    if (before.replay) return this.#dispatch(identity, projectId, operation, body, undefined, before.replay);
+    // D36: launcher-only B8 Start awaits U81-S. Keep exact committed replays
+    // above this fence; a new attempt must never consume its one-shot claim.
+    if (["start"].includes(operation)) throw new WebAccessError("start_deferred_u81s");
+    if (!this.#selectionGuard || !this.#adapter.available(operation) || this.#freshness <= 1000) throw unavailable();
+    const local = before.local, text = before.policy?.text ?? local!.input.settings_text;
+    const decoded = decodeSelectionEditsV1(text);
+    loopSelectionSchemaV1.parse(decoded.selection);
+    // Configured provider choices require the later U83a assembly hook. Launcher routes are independent.
+    if (Object.hasOwn(parseLoopSettingsV1(text), "providerRoute") || body.route || body.paid) throw unavailable();
+    let observed: LoopEngineStatusV1 | undefined;
+    if (local) {
+      observed = await this.#adapter.status(this.#run(local).loopRunId);
+      this.#current(observed, local, body, operation === "start");
+      if (operation === "confirm" && (body.requestSha256 !== loopByteHashV1(observed.description)
+        || body.settingsSha256 !== observed.settingsSha256 || observed.state === "stopped" || local.authorization)) throw conflict();
+      if (operation === "start" && (body.runLinkId !== local.link?.id || observed.state !== "ready")) throw conflict();
+    }
+    const normalized = operation === "confirm" && observed!.description !== local!.input.description;
+    const base = { schemaVersion: 1 as const, body: structuredClone(body), localVersion: local ? Number(local.input.version) + (normalized ? 1 : 0) : 1,
+      adapterId: this.#adapter.adapterId, loopRunId: local ? this.#run(local).loopRunId : this.#adapter.reserveRun(),
+      toolingRevision: this.#adapter.toolingRevision, a2SchemaVersion: 1 as const, schemaDigest: this.#adapter.schemaDigest,
+      requestSha256: local ? normalized ? loopByteHashV1(observed!.description) : local.input.request_sha256 : loopByteHashV1(body.description as string),
+      settingsSha256: loopByteHashV1(text), runLinkId: local?.link?.id ?? null, authorizationId: local?.authorization?.id ?? null,
+      inputVersion: observed?.inputVersion ?? null, expectedRevision: observed?.revision ?? null, evidence: null };
+    let acknowledgement: LoopBridgeBindingV1["sameFamilyAcknowledgement"];
+    if (body.acceptSameFamilyRisk === true && !decoded.overrides.reviewFamily)
+      throw new LoopPolicyRefusedV1([{ code: "acknowledgement_not_applicable", explanation: "Review-family acceptance requires the current run override." }]);
+    if (!body.acceptSameFamilyRisk && local) acknowledgement = await this.#desk.loopBridgeTransaction(identity, projectId, false,
+      ({ tx, actor }) => this.#acceptedSelection(tx, projectId, requestId!, actor.id, base));
+    const frozenMono = performance.now(), frozenWall = this.clock(), frozenMonoEnd = performance.now(), deadlineMono = frozenMono + this.#freshness;
+    if (body.acceptSameFamilyRisk === true) acknowledgement = { schema_version: 1, rule: "R296", run: base.loopRunId,
+      by: "owner", accepted_at: new Date(frozenWall).toISOString(), acknowledgement: "same-family-risk-accepted" };
+    const binding = loopBridgeBindingSchemaV1.parse({ ...base, ...(acknowledgement ? { sameFamilyAcknowledgement: acknowledgement } : {}) });
+    const freeze = (value: unknown): void => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } };
+    freeze(binding);
+    const commandId = `loop-command:${randomBytes(16).toString("hex")}`;
+    const remaining = () => {
+      const mono = performance.now(), wall = this.clock() - frozenWall, monoEnd = performance.now();
+      // Wall reads occur inside these monotonic intervals. Allow sampling pauses
+      // and millisecond rounding, while refusing disagreement outside the intervals.
+      const elapsedMin = mono - frozenMonoEnd, elapsedMax = monoEnd - frozenMono;
+      if (monoEnd < mono || mono < frozenMono || wall < 0 || wall < elapsedMin - 2 || wall > elapsedMax + 2 || performance.now() >= deadlineMono) throw unavailable();
+      return Math.floor(deadlineMono - performance.now());
+    };
+    try { if (this.#selectionReady?.() !== true) throw unavailable(); } catch { throw unavailable(); }
+    const checked = Object.freeze({ ...await this.#selectionGuard.capture() }); remaining();
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.max(0, remaining() - 1000));
+    let result;
+    try {
+      result = await this.#policy.checkWith(text, { mode: "admission", binding, commandId }, { signal: controller.signal, timeoutMs: remaining() });
+      if (controller.signal.aborted || remaining() <= 1000) throw unavailable();
+    } finally { clearTimeout(timer); }
+    const { projection: rawProjection, snapshot: attested, ...rawCheck } = result;
+    const check = loopSelectionCheckSchemaV1.safeParse(rawCheck), projection = loopSelectionProjectionSchemaV1.safeParse(rawProjection);
+    if (!check.success || !projection.success || !equal(attested, checked)
+      || projection.data.rosterDigest !== checked.rosterDigest || projection.data.availabilityDigest !== checked.availabilityDigest) throw unavailable();
+    assertNoSecretMaterial(projection.data); assertNoSecretMaterial(check.data);
+    const requested = new Map<string, { model: string; route: string; effort: string }>();
+    for (const [role, values] of Object.entries(decoded.selection.roles))
+      for (const [index, value] of (Array.isArray(values) ? values : [values]).entries()) requested.set(`${role}:${index}`, value);
+    for (const entry of projection.data.lineup) {
+      const want = requested.get(`${entry.role}:${entry.index}`);
+      if (!want || want.model !== entry.requested.model || want.route !== entry.requested.route || want.effort !== entry.requested.effort) throw unavailable();
+      requested.delete(`${entry.role}:${entry.index}`);
+    }
+    if (requested.size) throw unavailable();
+    if (!check.data.eligible) throw new LoopPolicyRefusedV1(check.data.reasons);
+    if (projection.data.lineup.some(slot => slot.requested.cost === "paid" || slot.effective?.cost === "paid") || projection.data.reservedFinal?.cost === "paid") throw unavailable();
+    const selectionDispatch = Object.freeze({ commandId, bindingDigest: sha256Digest(binding), snapshot: checked, lineupDigest: projection.data.lineupDigest });
+    // Per-statement waits cover authority/project/head locks as well as lineage writes. The driver inherits cancellation.
+    const run = async <T>(callback: (tx: DatabaseSession) => Promise<T>, precommit: () => void | Promise<void>) => {
+      return this.db.transactionWithPreCommitCheck(async tx => {
+        remaining();
+        if (this.#selectionGuard instanceof LoopSelectionSnapshotCoordinatorV1) bindLoopSelectionSourceDeadlineV1(tx, { frozenMono, frozenMonoEnd, frozenWall, deadlineMono });
+        const alias: DatabaseSession = { query: async <U>(sql: string, params?: unknown[]) => {
+          const ms = remaining(); if (ms <= 0) throw unavailable();
+          await tx.query("SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)", [`${ms}ms`]);
+          const value = await tx.query<U>(sql, params); remaining(); return value;
+        } };
+        if (this.#selectionGuard instanceof LoopSelectionSnapshotCoordinatorV1) registerLoopSelectionSourceTransactionAliasV1(alias, tx);
+        return callback(alias);
+      }, async () => { remaining(); await precommit(); remaining(); });
+    };
+    const bounded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: callback => run(callback, () => {}), transactionWithPreCommitCheck: run };
+    const desk = new ImproveControlRoomDeskServiceV1(bounded, this.scope, this.#key, undefined, this.clock, this.#adapter.contract);
+    const deadline = new AbortController(), deadlineTimer = setTimeout(() => deadline.abort(), remaining());
+    let admitted;
+    try { admitted = await withDatabaseOperationSignal(deadline.signal, () => desk.loopBridgeTransaction(identity, projectId, true, async ({ tx, actor, lineage }) => {
+      const raw = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3 AND entry_kind='claim'`,
+        [this.scope.tenantId, actor.id, key])).rows[0];
+      if (raw) {
+        const claim = this.#verify(raw);
+        if (claim.project_id !== projectId || claim.operation !== operation || requestId !== null && claim.request_id !== requestId || !equal(claim.binding.body, body)) throw conflict();
+        const saved = await lineage.loopBridgeLineage(tx, projectId, claim.request_id, actor.id);
+        if (operation === "intake") await this.#assertIntakeKind(tx, saved, "product-b8");
+        else if (await this.#policy.inputAdmissionKind(tx, saved.root.id, Number(saved.input.version)) !== "product-b8") throw unavailable();
+        this.#pins(claim.binding, operation);
+        return { claim, result: await this.#result(tx, claim), replayed: true };
+      }
+      if (actor.id !== before.owner || !this.#adapter.available(operation)) throw conflict();
+      this.#pins(binding, operation);
+      let current = requestId ? await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id) : undefined;
+      if (current && !equal(JSON.parse(JSON.stringify(current)), JSON.parse(JSON.stringify(local)))) throw conflict();
+      if (current) {
+        if (await this.#policy.inputAdmissionKind(tx, current.root.id, Number(current.input.version)) !== "product-b8") throw unavailable();
+        this.#current(observed!, current, body, operation === "start");
+        if (operation === "confirm" && current.authorization) throw conflict();
+        const existing = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands WHERE tenant_id=$1 AND request_id=$2 AND operation=$3 AND entry_kind='claim'`,
+          [this.scope.tenantId, requestId, operation])).rows;
+        for (const row of existing) {
+          const prior = this.#verify(row);
+          if (operation === "start" || prior.binding.localVersion === binding.localVersion) throw conflict();
+        }
+        if (!body.acceptSameFamilyRisk && !equal(acknowledgement ?? null, (await this.#acceptedSelection(tx, projectId, requestId!, actor.id, binding)) ?? null)) throw conflict();
+        if (operation === "start") await this.#policy.validateStartWaiver(tx, projectId, requestId!, Number(current.input.version));
+      } else {
+        const fresh = await this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined, body.waiverId as string | undefined);
+        this.#policy.assertSnapshot(before.policy!, fresh);
+      }
+      remaining();
+      await this.#selectionGuard!.assertCurrent(tx, checked); remaining();
+      // No draft/source/claim may precede the current-reader fence.
+      if (!current) {
+        const draft = await lineage.saveLoopDraft(identity, projectId, { description: body.description, settingsText: text }, key);
+        current = await lineage.loopBridgeLineage(tx, projectId, draft.request.requestId, actor.id);
+        if (draft.replayed) await this.#assertIntakeKind(tx, current, "product-b8");
+        await this.#policy.consumeWaiver(tx, projectId, current.root.id, before.policy!);
+        await this.#policy.recordInputSources(tx, { requestId: current.root.id, inputVersion: 1, defaultsSha256: before.policy!.defaultsSha256,
+          layerVersions: before.policy!.layerVersions, waiverId: before.policy!.waiverId ?? null, admissionKind: "product-b8" });
+      } else if (normalized) {
+        await lineage.reviseLoopDraft(identity, projectId, { requestId, expectedVersion: Number(current.input.version), description: observed!.description, settingsText: text }, key);
+        await this.#policy.copyInputSources(tx, { requestId: requestId!, fromVersion: Number(current.input.version), toVersion: binding.localVersion });
+        current = await lineage.loopBridgeLineage(tx, projectId, requestId!, actor.id);
+      }
+      const reconstructed = loopBridgeBindingSchemaV1.parse({ ...binding, localVersion: Number(current.input.version), requestSha256: current.input.request_sha256,
+        settingsSha256: current.input.settings_sha256, runLinkId: current.link?.id ?? null, authorizationId: current.authorization?.id ?? null });
+      if (!equal(reconstructed, binding)) throw conflict();
+      remaining(); actor.assertTimeCurrent();
+      const bytes = (await tx.query<{bytes:number}>("SELECT octet_length($1::jsonb::text) AS bytes", [JSON.stringify(binding)])).rows[0]!.bytes;
+      if (Number(bytes) > 65536) throw new WebAccessError("invalid_request");
+      const claim = await this.#insert(tx, { tenant_id: this.scope.tenantId, command_id: commandId, entry_kind: "claim", request_id: current.root.id,
+        project_id: projectId, owner_identity_id: actor.id, operation, idempotency_key: key, binding, result: null, created_at: actor.now });
+      return { claim, result: undefined, replayed: false, settingsText: text, selectionDispatch };
+    })); } finally { clearTimeout(deadlineTimer); }
+    try { return await this.#dispatch(identity, projectId, operation, body, observed, admitted); }
+    finally { await this.#sweepCommandFiles(identity, projectId); }
+  }
   async #mutate(identity: VerifiedWebIdentity, projectId: string, requestId: string | null,
-    operation: LoopBridgeOperationV1, input: unknown, idempotencyKey: string) {
+    operation: LoopBridgeOperationV1, input: unknown, idempotencyKey: string, origin: "native-p71" | "product-b8" | "retained") {
+    if (!["native-p71", "product-b8", "retained"].includes(origin) || (requestId === null) === (origin === "retained")) throw unavailable();
     if (!id.safeParse(projectId).success || requestId !== null && !id.safeParse(requestId).success
       || !keySchema.safeParse(idempotencyKey).success || (operation === "intake") !== (requestId === null)) throw new WebAccessError("invalid_request");
     const parsed = loopBridgeBodiesV1[operation].safeParse(input);
@@ -682,13 +952,17 @@ export class ImproveControlRoomLoopServiceV1 {
         if (raw) {
           const prior = this.#verify(raw);
           if (prior.project_id !== projectId || prior.operation !== operation || !equal(prior.binding.body, body)) throw conflict();
-          await lineage.loopBridgeLineage(tx, projectId, prior.request_id, actor.id);
+          const saved = await lineage.loopBridgeLineage(tx, projectId, prior.request_id, actor.id);
+          await this.#assertIntakeKind(tx, saved, origin as "native-p71" | "product-b8");
           this.#pins(prior.binding, prior.operation);
           return undefined;
         }
         if (!this.#adapter.available(operation)) throw unavailable();
         return this.#policy.snapshot(tx, projectId, body.settingsEdits as string | undefined, body.waiverId as string | undefined);
       });
+      if (origin === "product-b8")
+        return this.#selectionMutate(identity, projectId, null, "intake", body, idempotencyKey);
+      if (policyPreflight && body.acceptSameFamilyRisk) throw new WebAccessError("invalid_request");
       if (policyPreflight) await this.#policy.check(policyPreflight);
     }
     // Stop needs no observational preflight: its own decoded result verifies
@@ -700,14 +974,18 @@ export class ImproveControlRoomLoopServiceV1 {
         const prior = (await tx.query<Row>(`SELECT * FROM control_loop_improvement_commands
           WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3 AND entry_kind='claim'`,
         [this.scope.tenantId, actor.id, idempotencyKey])).rows[0];
-        if (prior) { this.#verify(prior); return { local, replay: true }; }
-        if (operation === "start" && !body.route) throw new WebAccessError("invalid_request");
+        const kind = ["confirm", "start"].includes(operation) ? await this.#policy.inputAdmissionKind(tx, requestId, Number(local.input.version)) : undefined;
+        if (prior) { this.#verify(prior); return { local, replay: true, kind }; }
+        if (operation === "start" && !body.route && kind !== "product-b8") throw new WebAccessError("invalid_request");
         if (!this.#adapter.available(operation)) throw unavailable();
         if (body.expectedVersion !== Number(local.input.version)) throw conflict();
         if (operation === "start" && body.runLinkId !== local.link?.id) throw new WebAccessError("not_found");
         if (["start", "approve", "answer"].includes(operation) && !local.authorization) throw conflict();
-        return { local, replay: false };
+        return { local, replay: false, kind };
       });
+      if (["confirm", "start"].includes(operation) && snapshot.kind === "product-b8")
+        return this.#selectionMutate(identity, projectId, requestId, operation as "confirm" | "start", body, idempotencyKey);
+      if (!snapshot.replay && body.acceptSameFamilyRisk) throw new WebAccessError("invalid_request");
       if (!snapshot.replay) {
         preflight = await this.#adapter.status(this.#run(snapshot.local).loopRunId);
         if (operation === "start") {
@@ -733,7 +1011,8 @@ export class ImproveControlRoomLoopServiceV1 {
         const prior = this.#verify(priorRaw);
         if (prior.project_id !== projectId || prior.operation !== operation || (requestId !== null && prior.request_id !== requestId)
           || !equal(prior.binding.body, body)) throw conflict();
-        await lineage.loopBridgeLineage(tx, projectId, prior.request_id, actor.id);
+        const saved = await lineage.loopBridgeLineage(tx, projectId, prior.request_id, actor.id);
+        if (operation === "intake") await this.#assertIntakeKind(tx, saved, "native-p71");
         this.#pins(prior.binding, prior.operation);
         return { claim: prior, result: await this.#result(tx, prior), replayed: true };
       }
@@ -750,9 +1029,10 @@ export class ImproveControlRoomLoopServiceV1 {
         local = await lineage.loopBridgeLineage(tx, projectId, draft.request.requestId, actor.id);
         await this.#policy.consumeWaiver(tx, projectId, local.root.id, fresh);
         await this.#policy.recordInputSources(tx, { requestId: local.root.id, inputVersion: Number(local.input.version),
-          defaultsSha256: fresh.defaultsSha256, layerVersions: fresh.layerVersions, waiverId: fresh.waiverId ?? null });
+          defaultsSha256: fresh.defaultsSha256, layerVersions: fresh.layerVersions, waiverId: fresh.waiverId ?? null, admissionKind: "native-p71" });
       } else {
         local = await lineage.loopBridgeLineage(tx, projectId, requestId, actor.id);
+        if (["confirm", "start"].includes(operation) && await this.#policy.inputAdmissionKind(tx, requestId, Number(local.input.version)) === "product-b8") throw unavailable();
         const run = this.#run(local);
         // Preflight ran outside every transaction; admission rechecks the saved lineage.
         observed = preflight;
@@ -857,7 +1137,7 @@ export class ImproveControlRoomLoopServiceV1 {
     finally { await this.#sweepCommandFiles(identity, projectId); }
   }
   async #dispatch(identity: VerifiedWebIdentity, projectId: string, operation: LoopBridgeOperationV1,
-    body: Record<string, unknown>, preflight: LoopEngineStatusV1 | undefined, admitted: { claim: Row; result: Row | undefined; replayed: boolean; settingsText?: string; startAdmission?:LoopStartAdmissionV1 }) {
+    body: Record<string, unknown>, preflight: LoopEngineStatusV1 | undefined, admitted: { claim: Row; result: Row | undefined; replayed: boolean; settingsText?: string; startAdmission?:LoopStartAdmissionV1; selectionDispatch?: LoopSelectionDispatchV1 }) {
     if (admitted.result) {
       await this.#releaseCommandFiles(admitted.claim);
       return this.#receipt(admitted.claim, admitted.result, true);
@@ -882,9 +1162,9 @@ export class ImproveControlRoomLoopServiceV1 {
       const { claim } = admitted, b = claim.binding;
       let status: LoopEngineStatusV1;
       switch (operation) {
-        case "intake": status = await this.#adapter.intake(claim.command_id, this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : b, body.description as string, beforeSpawn, admitted.settingsText!); break;
-        case "confirm": status = await this.#adapter.confirmRequest(claim.command_id, b, beforeSpawn, admitted.settingsText!); break;
-        case "start": status = await this.#adapter.start(claim.command_id, b, beforeSpawn, admitted.settingsText!, admitted.startAdmission); break;
+        case "intake": status = await this.#adapter.intake(claim.command_id, b, body.description as string, beforeSpawn, admitted.settingsText!, admitted.selectionDispatch, this.#adapter.intakeDriver ? this.#intakeCustody(claim) : undefined); break;
+        case "confirm": status = await this.#adapter.confirmRequest(claim.command_id, b, beforeSpawn, admitted.settingsText!, admitted.selectionDispatch); break;
+        case "start": status = await this.#adapter.start(claim.command_id, b, beforeSpawn, admitted.settingsText!, admitted.startAdmission, admitted.selectionDispatch); break;
         case "stop": status = await this.#adapter.stop(claim.command_id, b, beforeSpawn); break;
         case "approve": status = await this.#adapter.approve(claim.command_id, b, beforeSpawn, admitted.settingsText!); break;
         case "answer": status = await this.#adapter.answer(claim.command_id, b, body.text as string, beforeSpawn, admitted.settingsText!); break;
@@ -894,8 +1174,8 @@ export class ImproveControlRoomLoopServiceV1 {
       if (databaseSqlStateIsAnyV1(error, ["40P01", "40001"])) throw error;
       const claim = admitted.claim;
       if (operation === "intake" && error instanceof LoopIntakeRefusalV1 && error.commandId === claim.command_id
-        && error.bindingDigest === sha256Digest(this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : claim.binding)
-        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, this.#adapter.intakeDriver ? this.#intakeEngineBinding(claim) : claim.binding, error.code)) {
+        && error.bindingDigest === sha256Digest(claim.binding)
+        && error.evidenceDigest === loopIntakeRefusalEvidenceV1(claim.command_id, claim.binding, error.code)) {
         try {
           this.#pins(claim.binding, "intake");
           const outcome = loopBridgeOutcomeSchemaV1.parse({ state: "refused", revision: 0,

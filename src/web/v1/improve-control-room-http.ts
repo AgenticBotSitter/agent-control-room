@@ -10,7 +10,7 @@ import type { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room
 import type { ImproveControlRoomLoopServiceV1 } from "./improve-control-room-loop-service";
 
 export function createImproveControlRoomHttpHandlerV1(options: { origin: string; service?: ImproveControlRoomDeskServiceV1;
-  loopBridge?: Pick<ImproveControlRoomLoopServiceV1, "mutate" | "status" | "viewDesk" | "readApprovalDocument">;
+  loopBridge?: Pick<ImproveControlRoomLoopServiceV1, "intakeSelection" | "mutate" | "status" | "viewDesk" | "readApprovalDocument">;
   trust?: AccessTrust; gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
   localOwnerSession?: LocalOwnerSessionServiceV1 }) {
   if (!options.service && !options.loopBridge) throw new Error("improvement_service_required");
@@ -24,7 +24,7 @@ export function createImproveControlRoomHttpHandlerV1(options: { origin: string;
       const identity = local ? local.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
       if (url.search) throw new WebAccessError("invalid_request");
-      const loop = /^\/api\/v1\/projects\/([^/]+)\/improvements\/loop\/(desk|intake|([^/]+)\/(status|approval-document|confirm|start|stop|approve|answer))$/.exec(url.pathname);
+      const loop = /^\/api\/v1\/projects\/([^/]+)\/improvements\/loop\/(desk|intake|selection-intake|([^/]+)\/(status|approval-document|confirm|start|stop|approve|answer))$/.exec(url.pathname);
       if (loop && options.loopBridge) {
         const decodeId = (encoded: string) => {
           let value: string; try { value = decodeURIComponent(encoded); } catch { throw new WebAccessError("invalid_request"); }
@@ -47,9 +47,12 @@ export function createImproveControlRoomHttpHandlerV1(options: { origin: string;
         if (request.method !== "POST" || !request.body
           || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
           throw new WebAccessError("invalid_request");
-        const result = await options.loopBridge.mutate(identity, projectId, requestId,
+        const body = await readBoundedJson(request.body, privateRequestBudgets.improvement), key = request.headers.get("idempotency-key") ?? "";
+        const result = await (loop[2] === "selection-intake"
+          ? options.loopBridge.intakeSelection(identity, projectId, body, key)
+          : options.loopBridge.mutate(identity, projectId, requestId,
           (loop[4] ?? "intake") as "intake" | "confirm" | "start" | "stop" | "approve" | "answer",
-          await readBoundedJson(request.body, privateRequestBudgets.improvement), request.headers.get("idempotency-key") ?? "")
+          body, key))
           .catch(error => {
             if (loop[4] === "start" && error instanceof LoopProviderRefusedV1)
               return Response.json({ error: "provider_refused", reason: error.reason, message: error.message },

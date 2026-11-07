@@ -432,3 +432,12 @@ test("B6 a slow export from another process never leaves an older file behind (s
   assert.deepEqual(await f.service.reconcile(), { exported: true, version: 2 });
   assert.deepEqual(await readdir(join(f.root, "roster")), ["roster-export.tsv"]);
 });
+
+test('T-SNAPSHOT roster seed refuses source-busy before its first source write',async t=>{
+  const f=await rosterFixture(t);
+  const participant={async lockSources(){throw Error('selection_source_busy');},async invalidate(){}};
+  const service=new (LoopRosterServiceV1 as any)(f.client,scope,f.tools,()=>now,{},participant);
+  await assert.rejects(service.seedFromTsv(synthetic,'tools-seed'),/selection_source_busy/);
+  assert.equal(await f.count(),0,'busy source fence leaves no roster models');
+  assert.equal((await f.db.query('SELECT * FROM control_loop_roster_state')).rows.length,0);
+});

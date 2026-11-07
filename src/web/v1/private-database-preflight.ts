@@ -86,10 +86,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Re-derived for the merged main and B7 schema: main's 0303-0308 migrations
 // (update candidates, start authorization, unavailable sections, review identity
 // and constraint validation), plus B7's 0309-0315 roster, policy, providers,
-// prices, P72 locks/scoped waiver transitions/closed waiverId intake, and paid admission.
+// prices, P72 locks/scoped waiver transitions/closed waiverId intake, paid admission, and D33 selection provenance.
 // Previous pins: main `3448fa44...`, B7 `0d0e9128...`.
 // Web/updater digests measured equal in PGlite and native PostgreSQL 17.
-export const privateWebSchemaDigest = "4a6a7d6b379607ba88adff4798e0aa0fb267ca03894a13b9cf7c65c0db2aaf78";
+export const privateWebSchemaDigest = "2d8114af1694cf47f6d49f4b9958198318a0a4ec0b666e746839c2fe94893ba9";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -137,7 +137,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_loop_roster_models", "control_loop_roster_state",
   "control_loop_providers", "control_loop_provider_models", "control_loop_provider_state",
   "control_loop_provider_prices", "control_loop_provider_fetches",
-  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources", "control_loop_policy_waivers",
+  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources", "control_loop_policy_input_admissions", "control_loop_policy_waivers",
   // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
   // notice, claim and settle, and holds nothing else on it. Listed here because
   // 0226 grants SELECT on it, and the column audit compares the live grant
@@ -200,7 +200,7 @@ for (const table of ["control_loop_improvement_requests", "control_loop_improvem
   "control_loop_roster_models", "control_loop_roster_state",
   "control_loop_providers", "control_loop_provider_models", "control_loop_provider_state",
   "control_loop_provider_prices", "control_loop_provider_fetches",
-  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources", "control_loop_policy_waivers"]) privateWebInsertTables.add(table);
+  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources", "control_loop_policy_input_admissions", "control_loop_policy_waivers"]) privateWebInsertTables.add(table);
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // MIG-I: the dispatcher writes the FIRST head for a newly noticed item and
@@ -905,6 +905,16 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                'control_room_schema_owner', the pinned search_path, no EXECUTE for
                PUBLIC, and an ACL admitting exactly the one login the role file
                grants it to. */
+            OR (p.oid='control_loop_selection_ack_timestamp_v1(text)'::regprocedure
+              AND NOT p.prosecdef AND p.provolatile='i' AND p.prokind='f' AND p.prorettype='timestamptz'::regtype
+              AND p.pronargs=1 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web')))
             OR (p.oid='planner_failure_scope_key(text,jsonb)'::regprocedure
               AND NOT p.prosecdef AND p.provolatile='i' AND p.prokind='f' AND p.prorettype='text'::regtype
               AND p.pronargs=2 AND NOT p.proleakproof AND p.proparallel='u'

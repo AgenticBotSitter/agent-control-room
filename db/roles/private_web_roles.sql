@@ -16,6 +16,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_private_web;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION control_loop_selection_ack_timestamp_v1(text) TO control_room_private_web;
 -- Lead-approved read-only schedule presentation; no occurrence or schedule mutation.
 GRANT SELECT ON control_schedules, control_schedule_occurrences TO control_room_private_web;
 GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web_sessions,
@@ -319,7 +320,7 @@ GRANT UPDATE (version, exported_version, exported_sha256, last_idempotency_key, 
   ON control_loop_roster_state TO control_room_private_web;
 
 -- P71: policy copies and audit are append only; only the two layer heads change.
-GRANT SELECT, INSERT ON control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources TO control_room_private_web;
+GRANT SELECT, INSERT ON control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources, control_loop_policy_input_admissions TO control_room_private_web;
 GRANT UPDATE (version, settings_text, settings_sha256, updated_by, updated_at, last_idempotency_key, last_request_digest, locked_paths)
   ON control_loop_policy_layers TO control_room_private_web;
 

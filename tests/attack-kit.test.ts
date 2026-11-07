@@ -1440,3 +1440,20 @@ lane.closeLane([
   "attack-kit-allow-stale-", "attack-kit-allow-state-", "attack-kit-allow-nostate-",
   "attack-kit-allow-bounds-", "attack-kit-ipsc-",
 ]);
+
+// Keep disposable sockets inside a caller-owned long checkout scratch root.
+test('attack-kit short socket names preserve custody, uniqueness and byte bounds', async () => {
+  const {shortSocketDirectory}=await import('./support/attack-kit/real-postgres');
+  const prior=process.env.ATTACK_KIT_SOCKET_ROOT;
+  try {
+    const root='/'+ 'x'.repeat(64);process.env.ATTACK_KIT_SOCKET_ROOT=root;
+    const first=shortSocketDirectory('/fixture/attack-kit-pg-ABCDEF',60920);
+    assert.equal(first.slice(0,root.length+1),root+'/');
+    assert.ok(Buffer.byteLength(first)+16<=100);
+    assert.equal(shortSocketDirectory('/fixture/attack-kit-pg-ABCDEF',60920),first);
+    assert.notEqual(shortSocketDirectory('/fixture/attack-kit-pg-UVWXYZ',60920),first);
+    assert.notEqual(shortSocketDirectory('/fixture/attack-kit-pg-ABCDEF',60921),first);
+    process.env.ATTACK_KIT_SOCKET_ROOT='/'+ 'x'.repeat(95);
+    assert.throws(()=>shortSocketDirectory('/fixture/attack-kit-pg-ABCDEF',60920),/attack_kit_socket_path_too_long/);
+  }finally{if(prior===undefined)delete process.env.ATTACK_KIT_SOCKET_ROOT;else process.env.ATTACK_KIT_SOCKET_ROOT=prior;}
+});
