@@ -25,19 +25,21 @@ export async function sourceFixture(t:TestContext){
   t.after(()=>rm(root,{recursive:true,force:true}));
   await mkdir(join(root,'config'),{mode:0o700});await mkdir(join(root,'roster'),{mode:0o700});
   let wall=now,mono=100,completed=health(),failPoint:string|undefined;
+  let sampleWall:((read:()=>number)=>number)|undefined;
   const exportPath=join(root,'roster/roster-export.tsv');await writeFile(exportPath,roster,{mode:0o600});
   await writeFile(join(root,'config/availability.json'),JSON.stringify(completed),{mode:0o600});
   const files=createLoopSelectionSourceFilesV1({availabilityFile:join(root,'config/availability.json'),rosterFile:exportPath,
     readAvailability:()=>completed,faults:{at(point){if(point===failPoint)throw Error('fixture crash');}}});
   const db=withLoopSelectionSourceTransactionsV1(f.client,files);
   const coordinator=new LoopSelectionSnapshotCoordinatorV1({db,...scope,sourceFiles:files,readRoster:readLoopRosterSnapshotSourceV1,
-    clock:{wallNow:()=>wall,monotonicNow:()=>mono}});
+    clock:{wallNow:()=>sampleWall?sampleWall(()=>wall):wall,monotonicNow:()=>mono}});
   const service=new LoopRosterServiceV1(db,scope,{rosterRoot:join(root,'roster'),toolsSeed:exportPath,check:async()=>({exitCode:0,lines:[]})},()=>wall,{},coordinator);
   assert.equal(existsSync(files.root),false,'capability construction has no filesystem effects');
   await coordinator.start();await service.start();
   const snapshot=await coordinator.capture();
   return {...f,root,files,db,coordinator,service,exportPath,snapshot,health:()=>completed,
     advance(ms:number){wall+=ms;mono+=ms;},wall:()=>wall,mono:()=>mono,setWall(value:number){wall=value;},
+    setWallSampler(value?:(read:()=>number)=>number){sampleWall=value;},
     setHealth(value:ReturnType<typeof health>){completed=value;},fault(value?:string){failPoint=value;},
     bind(tx:DatabaseSession,ms=5000){bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+ms,frozenWall:wall});}};
 }
@@ -102,6 +104,63 @@ test('T-SNAPSHOT precommit catches health expiry and wall/monotonic skew without
   await assert.rejects(f.db.transaction(async tx=>{f.bind(tx);await f.coordinator.assertCurrent(tx,f.snapshot);f.advance(5000);}));
   await assert.rejects(f.db.transaction(async tx=>{f.bind(tx);await f.coordinator.assertCurrent(tx,f.snapshot);f.setWall(f.wall()-1);}));
 });
+
+// The third wall read in validate() is the timing sample after current/source reads.
+// Advance both clocks around that read to simulate descheduling without sleeping.
+for(const phase of ['assertCurrent','precommit'] as const){
+  for(const side of ['before','after'] as const){
+    test(`T-SNAPSHOT sampling pause ${side} wall read at ${phase} preserves valid snapshot`,async t=>{
+      const f=await sourceFixture(t);let pauses=0;
+      const arm=()=>{let reads=0;f.setWallSampler(read=>{
+        if(++reads!==3)return read();
+        pauses++;
+        if(side==='before'){f.advance(25);return read();}
+        const wall=read();f.advance(25);return wall;
+      });};
+      await f.db.transaction(async tx=>{
+        f.bind(tx);
+        if(phase==='assertCurrent')arm();
+        await f.coordinator.assertCurrent(tx,f.snapshot);
+        if(phase==='precommit')arm();
+      });
+      assert.equal(pauses,1,'the timing sample must include exactly one simulated pause');
+      assert.equal(f.mono(),125,'sampling pause advances the original monotonic clock');
+    });
+  }
+  for(const jump of [-250,250]){
+    test(`T-SNAPSHOT wall jump ${jump} ms at ${phase} refuses snapshot`,async t=>{
+      const f=await sourceFixture(t);let jumps=0,callbackDone=false;
+      const before=(await f.db.query('SELECT updated_at FROM control_loop_roster_state')).rows;
+      const arm=()=>{let reads=0;f.setWallSampler(read=>{
+        if(++reads===3){f.setWall(f.wall()+jump);jumps++;}return read();
+      });};
+      await assert.rejects(f.db.transaction(async tx=>{
+        f.bind(tx);f.advance(1000);
+        if(phase==='assertCurrent')arm();
+        await f.coordinator.assertCurrent(tx,f.snapshot);
+        await tx.query("UPDATE control_loop_roster_state SET updated_at='2026-01-01T00:00:00Z'");
+        callbackDone=true;
+        if(phase==='precommit')arm();
+      }),{message:'selection_source_unavailable'});
+      assert.equal(jumps,1,'the timing sample must include the requested wall jump');
+      assert.equal(callbackDone,phase==='precommit','refuse at the requested validation boundary');
+      assert.deepEqual((await f.db.query('SELECT updated_at FROM control_loop_roster_state')).rows,before,'refusal rolls back transaction writes');
+    });
+  }
+  test(`T-SNAPSHOT sampling pause at ${phase} cannot extend monotonic deadline`,async t=>{
+    const f=await sourceFixture(t);let pauses=0;
+    const arm=()=>{let reads=0;f.setWallSampler(read=>{
+      const wall=read();if(++reads===3){f.advance(5000);pauses++;}return wall;
+    });};
+    await assert.rejects(f.db.transaction(async tx=>{
+      f.bind(tx);
+      if(phase==='assertCurrent')arm();
+      await f.coordinator.assertCurrent(tx,f.snapshot);
+      if(phase==='precommit')arm();
+    }),{message:'selection_source_unavailable'});
+    assert.equal(pauses,1);
+  });
+}
 
 test('T-SNAPSHOT source-busy seed/edit/export and owned check-directory preservation',async t=>{
   const f=await sourceFixture(t),lease=f.files.acquire(),old=await readFile(f.exportPath);

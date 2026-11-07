@@ -216,9 +216,11 @@ export class LoopSelectionSnapshotCoordinatorV1 implements LoopSelectionSnapshot
     const scope = scopeOf(tx, this.input.sourceFiles); if (!scope.lease) throw unavailable(); this.input.sourceFiles.invalidate(scope.lease);
   }
   #now() {
-    const c = this.input.clock, wall = c ? c.wallNow() : Date.now(), mono = c ? c.monotonicNow() : performance.now();
-    if (!Number.isSafeInteger(wall) || wall < 0 || !Number.isFinite(mono) || mono < 0) throw unavailable();
-    return { wall, mono };
+    const c = this.input.clock, monoStart = c ? c.monotonicNow() : performance.now();
+    const wall = c ? c.wallNow() : Date.now(), mono = c ? c.monotonicNow() : performance.now();
+    if (!Number.isSafeInteger(wall) || wall < 0 || !Number.isFinite(monoStart) || monoStart < 0
+      || !Number.isFinite(mono) || mono < monoStart) throw unavailable();
+    return { wall, monoStart, mono };
   }
   async #sources(tx: DatabaseSession) {
     const roster = await this.input.readRoster(tx, this.input.tenantId);
@@ -249,8 +251,10 @@ export class LoopSelectionSnapshotCoordinatorV1 implements LoopSelectionSnapshot
     const validate = async () => {
       const current = this.input.sourceFiles.current(scope.lease!, this.#now().wall), sources = await this.#sources(tx);
       const at = this.#now(), d = scope.deadline!;
-      const elapsed = at.mono - d.frozenMono, wallElapsed = at.wall - d.frozenWall;
-      if (elapsed < 0 || at.mono >= d.deadlineMono || wallElapsed < 0 || Math.abs(elapsed - wallElapsed) > 2
+      // The wall read lies between the monotonic samples; a sampling pause is
+      // valid, but disagreement outside that interval (plus rounding) is not.
+      const elapsedMin = at.monoStart - d.frozenMono, elapsedMax = at.mono - d.frozenMono, wallElapsed = at.wall - d.frozenWall;
+      if (elapsedMin < 0 || at.mono >= d.deadlineMono || wallElapsed < 0 || wallElapsed < elapsedMin - 2 || wallElapsed > elapsedMax + 2
         || Date.parse(sources.availability.checked_at) + 3600000 < at.wall + (d.deadlineMono - at.mono)
         || canonicalJson(sources) !== canonicalJson({ roster: current.roster, availability: current.availability })
         || canonicalJson(snapshot) !== canonicalJson(selectionSnapshotFromBundleV1(current))) throw unavailable();

@@ -7,6 +7,11 @@ import { promisify } from 'node:util';
 
 type Mutation={name:string;file:string;before:string;after:string;custom?:(source:string)=>string;test:string;title:string;assertion:string};
 const mutations:Mutation[]=[
+  ...(['assertCurrent','precommit'] as const).flatMap(phase => [-250,250].map(jump => ({
+    name:`snapshot wall clock jump ${jump} at ${phase}`,file:'loop-selection-snapshot.ts',
+    before:'wallElapsed < 0 || wallElapsed < elapsedMin - 2 || wallElapsed > elapsedMax + 2',after:'false',
+    test:'loop-selection-snapshot.test.ts',title:`T-SNAPSHOT wall jump ${jump} ms at ${phase} refuses snapshot`,assertion:'Missing expected rejection',
+  }))),
   {name:'retained root inode',file:'loop-selection-snapshot.ts',before:'|| !sameFile(owned.root, current)',after:'|| false',
     test:'loop-selection-snapshot.test.ts',title:'T-SNAPSHOT retained lease refuses swapped root directory inode',assertion:'swapped inode must refuse despite identical nonce'},
   {name:'retained fence inode',file:'loop-selection-snapshot.ts',before:'|| !sameFile(owned.fence, checked(fence, true))',after:'|| false',
