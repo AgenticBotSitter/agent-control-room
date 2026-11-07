@@ -163,6 +163,14 @@ function withoutPostgresTestEnvironment() {
   return environment;
 }
 
+// The snapshot proof requires an explicit range. Scope its default to this
+// child: U81's separate PG proof must retain its own 60520-60539 allowlist.
+function postgresTestEnvironment(test) {
+  if (test !== "tests/loop-selection-snapshot-postgres.test.ts"
+      || process.env.CONTROL_ROOM_PG_TEST_PORT_BASE !== undefined) return process.env;
+  return { ...process.env, CONTROL_ROOM_PG_TEST_PORT_BASE: "59310" };
+}
+
 function executeCommand(command, arguments_, root, environment = process.env) {
   const child = spawnSync(command, arguments_, { cwd: root, stdio: "inherit", env: environment });
   if (child.error) throw child.error;
@@ -364,7 +372,7 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   const nonPgTests = guardedTests.filter(test => !pgTests.includes(test));
   const testCommands = [
     ...nonPgTests.map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: false })),
-    ...pgTests.map(test => ({ tests: [test], environment: process.env, exempt: false })),
+    ...pgTests.map(test => ({ tests: [test], environment: postgresTestEnvironment(test), exempt: false })),
     ...tests.filter(test => skippedTestExemptions.has(test)).map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: true })),
   ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);

@@ -57,8 +57,6 @@ jobs:
     timeout-minutes: 240
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
-      # Each job has its own runner; the snapshot proof requires an explicit range.
-      CONTROL_ROOM_PG_TEST_PORT_BASE: 59310
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
     steps:

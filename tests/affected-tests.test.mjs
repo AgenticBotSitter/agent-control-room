@@ -730,3 +730,32 @@ test('B8 mixed-file native exclusion still executes neighboring portable case an
     const result=runAffectedTests([b8MixedFileV1],[b8MixedFileV1],root,()=>0,()=>false,()=>({status:0,output:'# skipped 1\n'}));assert.equal(result,1);
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test("snapshot port allocation is confined to its own PostgreSQL child", () => {
+  const snapshot = "tests/loop-selection-snapshot-postgres.test.ts";
+  const selection = "tests/loop-selection-postgres.test.ts";
+  const ordinary = "tests/normal.test.mjs";
+  const root = fixture({ [snapshot]: "const requiresRealPostgres = true;",
+    [selection]: "const requiresRealPostgres = true;", [ordinary]: "" });
+  const previous = process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+  try {
+    for (const assigned of [undefined, "60530"]) {
+      if (assigned === undefined) delete process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+      else process.env.CONTROL_ROOM_PG_TEST_PORT_BASE = assigned;
+      const observed = new Map();
+      assert.equal(runAffectedTests([ordinary, snapshot, selection], [ordinary, snapshot, selection], root,
+        () => 0, () => true, (_command, args, _cwd, environment) => {
+          observed.set(args.at(-1), environment.CONTROL_ROOM_PG_TEST_PORT_BASE);
+          return { status: 0, output: "# skipped 0\n" };
+        }), 0);
+      assert.equal(observed.get(snapshot), assigned ?? "59310", "snapshot gets an explicit range");
+      assert.equal(observed.get(selection), assigned, "U81 keeps its independent port allowlist/default");
+      assert.equal(observed.get(ordinary), assigned, "ordinary files inherit no new range");
+      assert.equal(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE, assigned, "child allocation cannot mutate the parent");
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+    else process.env.CONTROL_ROOM_PG_TEST_PORT_BASE = previous;
+    rmSync(root, { recursive: true });
+  }
+});
