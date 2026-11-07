@@ -767,3 +767,98 @@ test('R5A-02 Stop listening keeps final words available for explicit confirmatio
     assert.deepEqual(committed, ['review these words']);
   } finally { await h.cleanup(); }
 });
+
+/* ---------------------------------------------------------------------------
+ * #324 control-availability boundary.
+ *
+ * `controlsDisabled` is an optional prop on VoiceControlsSurface. It must
+ * gate the two voice buttons without touching the enable checkbox, and it
+ * must force-stop a live engine without committing anything.
+ * ------------------------------------------------------------------------- */
+
+test('#324 controlsDisabled disables both voice buttons even when the adapters report support', async () => {
+  const rec = makeRecognition(true), syn = makeSynthesis(true);
+  const h = await mount(<VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter}
+    synthesis={syn.adapter} readContent={{ text: 'Safe update' }} controlsDisabled />);
+  try {
+    assert.equal(rec.adapter.isSupported(), true);
+    assert.equal(syn.adapter.isSupported(), true);
+    const start = voiceButton(h, 'Start dictation');
+    const read = voiceButton(h, 'Read aloud');
+    assert.equal(start.disabled, true, 'Start dictation is unavailable while controls are disabled');
+    assert.equal(read.disabled, true, 'Read aloud is unavailable while controls are disabled');
+    // The enable checkbox stays interactive: turning voice off entirely is a
+    // different action from a temporary control-availability gate.
+    const enable = h.dom.window.document.querySelector('#voice-controls-enabled') as HTMLInputElement;
+    assert.ok(enable, 'the enable checkbox is still rendered');
+    assert.equal(enable.disabled, false, 'the enable checkbox stays interactive');
+    // A disabled button cannot start an engine.
+    await act(async () => { start.click(); read.click(); });
+    assert.equal(rec.state.starts, 0);
+    assert.equal(syn.state.speaks.length, 0);
+  } finally { await h.cleanup(); }
+});
+
+test('#324 controlsDisabled force-stops an active dictation and discards the unconfirmed transcript', async () => {
+  const rec = makeRecognition(), syn = makeSynthesis(); const committed: string[] = [];
+  const surface = (controlsDisabled: boolean) => (
+    <VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter} synthesis={syn.adapter}
+      onTranscriptCommitted={t => committed.push(t)} controlsDisabled={controlsDisabled} />);
+  const h = await mount(surface(false));
+  try {
+    // Dictation is live and words have been heard but not yet confirmed.
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    await act(async () => rec.state.callbacks!.onEvent({ eventId: 'final', transcript: 'unconfirmed words', isFinal: true }));
+    assert.match(h.text(), /Heard: unconfirmed words/);
+    assert.equal(committed.length, 0);
+    const stopsBefore = rec.state.stops;
+    // The caller withdraws control availability mid-listen.
+    await h.render(surface(true));
+    assert.equal(rec.state.stops, stopsBefore + 1, 'the recognition engine is stopped');
+    assert.deepEqual(committed, [], 'a control-availability change is not a commit');
+    assert.doesNotMatch(h.text(), /Heard:|unconfirmed words/, 'the unconfirmed transcript is discarded');
+    // Confirm must not offer a commit path while control availability is withdrawn.
+    const confirm = h.dom.window.document.querySelector('button[type="button"]') as HTMLButtonElement | null;
+    for (const button of Array.from(h.dom.window.document.querySelectorAll('button'))) {
+      if ((button.textContent ?? '').includes('Confirm')) {
+        assert.equal(button.disabled, true, 'Confirm is unavailable while controls are disabled');
+      }
+    }
+    assert.ok(confirm !== null);
+    // A late event from the stopped session cannot resurrect the transcript.
+    await act(async () => { rec.state.callbacks!.onEvent({ eventId: 'late', transcript: 'late words', isFinal: true }); });
+    assert.deepEqual(committed, []);
+    assert.doesNotMatch(h.text(), /late words/);
+  } finally { await h.cleanup(); }
+});
+
+test('#324 controlsDisabled cancels an active read-aloud and gates both buttons afterwards', async () => {
+  const rec = makeRecognition(), syn = makeSynthesis();
+  const surface = (controlsDisabled: boolean) => (
+    <VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter} synthesis={syn.adapter}
+      readContent={{ text: 'Safe update' }} controlsDisabled={controlsDisabled} />);
+  const h = await mount(surface(false));
+  try {
+    await act(async () => voiceButton(h, 'Read aloud').click());
+    assert.deepEqual(syn.state.speaks, ['Safe update']);
+    assert.match(h.text(), /Reading aloud/);
+    const cancelsBefore = syn.state.cancels;
+    await h.render(surface(true));
+    assert.equal(syn.state.cancels, cancelsBefore + 1, 'the synthesis engine is cancelled');
+    assert.doesNotMatch(h.text(), /Reading aloud/, 'read-aloud is no longer speaking');
+    assert.equal(voiceButton(h, 'Start dictation').disabled, true);
+    assert.equal(voiceButton(h, 'Read aloud').disabled, true);
+  } finally { await h.cleanup(); }
+});
+
+test('#324 omitting controlsDisabled leaves the default behaviour unchanged', async () => {
+  const rec = makeRecognition(), syn = makeSynthesis();
+  const h = await mount(<VoiceControlsSurface settings={{ enabled: true }} recognition={rec.adapter}
+    synthesis={syn.adapter} readContent={{ text: 'Safe update' }} />);
+  try {
+    assert.equal(voiceButton(h, 'Start dictation').disabled, false);
+    assert.equal(voiceButton(h, 'Read aloud').disabled, false);
+    await act(async () => voiceButton(h, 'Start dictation').click());
+    assert.equal(rec.state.starts, 1, 'dictation still starts without the prop');
+  } finally { await h.cleanup(); }
+});
