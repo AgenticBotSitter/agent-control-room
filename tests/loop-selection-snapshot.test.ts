@@ -41,7 +41,8 @@ export async function sourceFixture(t:TestContext){
     advance(ms:number){wall+=ms;mono+=ms;},wall:()=>wall,mono:()=>mono,setWall(value:number){wall=value;},
     setWallSampler(value?:(read:()=>number)=>number){sampleWall=value;},
     setHealth(value:ReturnType<typeof health>){completed=value;},fault(value?:string){failPoint=value;},
-    bind(tx:DatabaseSession,ms=5000){bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+ms,frozenWall:wall});}};
+    bind(tx:DatabaseSession,ms=5000,pause=0){const frozenMono=mono;wall+=pause;mono+=pause;
+      bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,frozenMonoEnd:mono,deadlineMono:frozenMono+ms,frozenWall:wall});}};
 }
 
 test('T-SNAPSHOT codec independent Unicode hashes, closed shapes, canonical versions and size bound',()=>{
@@ -103,6 +104,16 @@ test('T-SNAPSHOT precommit catches health expiry and wall/monotonic skew without
   f.advance(-3597000);
   await assert.rejects(f.db.transaction(async tx=>{f.bind(tx);await f.coordinator.assertCurrent(tx,f.snapshot);f.advance(5000);}));
   await assert.rejects(f.db.transaction(async tx=>{f.bind(tx);await f.coordinator.assertCurrent(tx,f.snapshot);f.setWall(f.wall()-1);}));
+});
+
+test('T-SNAPSHOT freeze sampling pause before wall read preserves valid snapshot through commit',async t=>{
+  const f=await sourceFixture(t);
+  await f.db.transaction(async tx=>{
+    f.bind(tx,5000,25);
+    await f.coordinator.assertCurrent(tx,f.snapshot);
+  });
+  assert.equal(f.mono(),125,'freeze sampling pause advances monotonic time');
+  assert.equal(f.wall(),now+25,'freeze wall sample includes the pause');
 });
 
 // The third wall read in validate() is the timing sample after current/source reads.
@@ -291,16 +302,26 @@ for (const operation of ['current', 'previous', 'invalidate', 'publish'] as cons
   });
 }
 
+test('T-SNAPSHOT deadline binding refuses nonfinite or reversed freeze brackets',async t=>{
+  const f=await sourceFixture(t);
+  for(const frozenMonoEnd of [NaN,Infinity,-Infinity,f.mono()-1]){
+    await f.db.transaction(async tx=>{
+      assert.throws(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:f.mono(),frozenMonoEnd,
+        deadlineMono:f.mono()+5000,frozenWall:f.wall()}),/selection_source_unavailable/);
+    });
+  }
+});
+
 test('T-SNAPSHOT fractional monotonic deadlines accept exactly five seconds and refuse longer windows',async t=>{
   const f=await sourceFixture(t);
   for(const frozenMono of [8191.999999999999,16383.999999999998]){
     const deadlineMono=frozenMono+5000;
     assert.ok(deadlineMono-frozenMono>5000,'vector reproduces subtraction rounding');
     await f.db.transaction(async tx=>{
-      assert.doesNotThrow(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,deadlineMono,frozenWall:f.wall()}));
+      assert.doesNotThrow(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,frozenMonoEnd:frozenMono,deadlineMono,frozenWall:f.wall()}));
     });
     await f.db.transaction(async tx=>{
-      assert.throws(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,deadlineMono:deadlineMono+0.000001,frozenWall:f.wall()}),/selection_source_unavailable/);
+      assert.throws(()=>bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,frozenMonoEnd:frozenMono,deadlineMono:deadlineMono+0.000001,frozenWall:f.wall()}),/selection_source_unavailable/);
     });
   }
 });

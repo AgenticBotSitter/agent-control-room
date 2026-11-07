@@ -825,7 +825,7 @@ export class ImproveControlRoomLoopServiceV1 {
       // Wall reads occur inside these monotonic intervals. Allow sampling pauses
       // and millisecond rounding, while refusing disagreement outside the intervals.
       const elapsedMin = mono - frozenMonoEnd, elapsedMax = monoEnd - frozenMono;
-      if (mono < frozenMono || wall < 0 || wall < elapsedMin - 2 || wall > elapsedMax + 2 || performance.now() >= deadlineMono) throw unavailable();
+      if (monoEnd < mono || mono < frozenMono || wall < 0 || wall < elapsedMin - 2 || wall > elapsedMax + 2 || performance.now() >= deadlineMono) throw unavailable();
       return Math.floor(deadlineMono - performance.now());
     };
     try { if (this.#selectionReady?.() !== true) throw unavailable(); } catch { throw unavailable(); }
@@ -857,7 +857,7 @@ export class ImproveControlRoomLoopServiceV1 {
     const run = async <T>(callback: (tx: DatabaseSession) => Promise<T>, precommit: () => void | Promise<void>) => {
       return this.db.transactionWithPreCommitCheck(async tx => {
         remaining();
-        if (this.#selectionGuard instanceof LoopSelectionSnapshotCoordinatorV1) bindLoopSelectionSourceDeadlineV1(tx, { frozenMono, frozenWall, deadlineMono });
+        if (this.#selectionGuard instanceof LoopSelectionSnapshotCoordinatorV1) bindLoopSelectionSourceDeadlineV1(tx, { frozenMono, frozenMonoEnd, frozenWall, deadlineMono });
         const alias: DatabaseSession = { query: async <U>(sql: string, params?: unknown[]) => {
           const ms = remaining(); if (ms <= 0) throw unavailable();
           await tx.query("SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)", [`${ms}ms`]);

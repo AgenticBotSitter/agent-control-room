@@ -632,6 +632,26 @@ for (const jump of [-250, 250]) {
   });
 }
 
+test('U81-B T12 positive wall elapsed after backward jump refuses before checker or authority', async t => {
+  const f = await selectionAdmissionFixture(t);
+  const checker = t.mock.method(f.policy, 'checkWith', async () => { assert.fail('backward clock jump reached checker'); });
+  let wallElapsed = 0, monoElapsed = 0;
+  t.mock.method(f.guard, 'capture', async () => {
+    const mono = performance.now(), wall = f.clock();
+    while (performance.now() - mono < 300) { /* bounded capture work before the backward step */ }
+    f.advanceTime(-250);
+    monoElapsed = performance.now() - mono; wallElapsed = f.clock() - wall;
+    return snapshot;
+  });
+  await assert.rejects(f.intake(true), /loop_bridge_contract_unavailable/);
+  assert.ok(wallElapsed > 0, 'wall elapsed stays positive after the backward step');
+  assert.ok(wallElapsed < monoElapsed - 2, 'backward step reaches the lower bracket bound');
+  assert.equal(checker.mock.callCount(), 0);
+  assert.equal(f.checks.length, 0); assert.equal(f.spawns, 0);
+  for (const table of ['control_loop_improvement_requests', 'control_loop_policy_input_sources', 'control_loop_improvement_commands'])
+    assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
+});
+
 test('U81-B T8 same key changed body conflicts without rechecking or dispatching',async t=>{
   const f=await selectionAdmissionFixture(t);await f.intake(true);
   await assert.rejects(f.intake(false),{code:'conflict'});assert.equal(f.checks.length,1);assert.equal(f.spawns,1);

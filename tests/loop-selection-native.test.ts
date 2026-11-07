@@ -101,12 +101,12 @@ finally:s.doCleanups()
   await t.test('legacy no-context parity',()=>privateCase('legacy'));
   const durations:number[]=[];
   for(let i=1;i<=30;i++)await t.test('stable admission '+String(i).padStart(2,'0'),async()=>{
-    const frozenMono=performance.now(),frozenWall=Date.now(),checked=await coordinator.capture();
+    const frozenMono=performance.now(),frozenWall=Date.now(),frozenMonoEnd=performance.now(),checked=await coordinator.capture();
     const value=await adapter.checkSettings!(settingsText,{mode:'admission',binding:staged.binding,commandId:'loop-command:'+i.toString(16).padStart(32,'0')},{signal:new AbortController().signal,timeoutMs:Math.max(1,Math.floor(5000-(performance.now()-frozenMono)))});
     assert.equal(value.eligible,true);assert.deepEqual(value.snapshot,checked);
     assert.equal((await readdir(join(root,'work'))).filter(n=>n.startsWith('policy-check-')).length,0,'owned checker directories removed');
     assert.ok(performance.now()-frozenMono<4000,'real preparation/check/decoding/cleanup strictly before W-1000');
-    await db.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,frozenWall,deadlineMono:frozenMono+5000});await coordinator.assertCurrent(tx,checked);});
+    await db.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono,frozenMonoEnd,frozenWall,deadlineMono:frozenMono+5000});await coordinator.assertCurrent(tx,checked);});
     const elapsed=performance.now()-frozenMono;assert.ok(elapsed<5000,'successful observed commit strictly before W');durations.push(elapsed);
   });
   const custody={tenantId:'tenant:synthetic',workspaceId:'workspace:synthetic',projectId:'project:synthetic',

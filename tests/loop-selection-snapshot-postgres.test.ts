@@ -93,7 +93,7 @@ test('T-SNAPSHOT PostgreSQL17 production-role source contention and COMMIT lifet
       const observed={query:db.query.bind(db),transaction:db.transaction.bind(db),transactionWithPreCommitCheck:<T>(callback:Parameters<typeof db.transaction<T>>[0],check:()=>void|Promise<void>)=>
         pools[0]!.client.transactionWithPreCommitCheck(callback,check).then(value=>{outerCommitted=true;assert.throws(()=>files.acquire(),/selection_source_busy/);return value;})};
       const admission=withLoopSelectionSourceTransactionsV1(observed,files);
-      await admission.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+5000,frozenWall:wall});
+      await admission.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,frozenMonoEnd:mono,deadlineMono:mono+5000,frozenWall:wall});
         await coordinator.assertCurrent(tx,checked);assert.throws(()=>files.acquire(),/selection_source_busy/);
         const before=await pg.query('web','SELECT * FROM control_loop_roster_state');
         const attempts=await Promise.allSettled(clients.map((d,i)=>new LoopRosterServiceV1(d,scope,{rosterRoot:join(root,'roster'),toolsSeed:exportPath,
@@ -117,7 +117,7 @@ test('T-SNAPSHOT PostgreSQL17 production-role source contention and COMMIT lifet
       const exporting=exporter.exportRoster();
       try{
         await reached;
-        await assert.rejects(db.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);}),/selection_source_busy/);
+        await assert.rejects(db.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,frozenMonoEnd:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);}),/selection_source_busy/);
       }finally{resume();await exporting;}
       afterRollback=await coordinator.capture();
       // Admission first: a due monitor attempt cannot change either file while
@@ -125,7 +125,7 @@ test('T-SNAPSHOT PostgreSQL17 production-role source contention and COMMIT lifet
       wall+=3000001;mono+=3000001;health={...health,checked_at:new Date(wall).toISOString()};
       const healthBefore=await readFile(file),scheduleBefore=await readFile(file+'.schedule.json');
       await db.transaction(async tx=>{
-        bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);
+        bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,frozenMonoEnd:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);
         const attempts=monitorAttempts;monitor!.tick();await until(()=>monitorAttempts>attempts&&!existsSync(file+'.monitor.lock'));
         assert.deepEqual(await readFile(file),healthBefore);assert.deepEqual(await readFile(file+'.schedule.json'),scheduleBefore);
       });
@@ -135,12 +135,12 @@ test('T-SNAPSHOT PostgreSQL17 production-role source contention and COMMIT lifet
       // Expiry at precommit rolls back a real production-role SQL write.
       const priorKey=(await pg.query<{last_idempotency_key:string|null}>('web','SELECT last_idempotency_key FROM control_loop_roster_state WHERE tenant_id=$1',[scope.tenantId])).rows[0]!.last_idempotency_key;
       await assert.rejects(db.transaction(async tx=>{
-        bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);
+        bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,frozenMonoEnd:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);
         await tx.query("UPDATE control_loop_roster_state SET last_idempotency_key='expired-rollback-fixture',last_request_digest=$2 WHERE tenant_id=$1",[scope.tenantId,sha256Digest({fixture:'expiry'})]);wall+=5000;mono+=5000;
       }),/selection_source_unavailable/);
       assert.equal((await pg.query<{last_idempotency_key:string|null}>('web','SELECT last_idempotency_key FROM control_loop_roster_state WHERE tenant_id=$1',[scope.tenantId])).rows[0]!.last_idempotency_key,priorKey);
       wall+=3599000;mono+=3599000;
-      await assert.rejects(db.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);}));
+      await assert.rejects(db.transaction(async tx=>{bindLoopSelectionSourceDeadlineV1(tx,{frozenMono:mono,frozenMonoEnd:mono,deadlineMono:mono+5000,frozenWall:wall});await coordinator.assertCurrent(tx,afterRollback);}));
       console.log('T-SNAPSHOT PG production_connections=24 source_busy_seed=24 arrivals=24 winners=1 losers=23 authorized_owners=24 distinct_projects=24 held_admission_writers_refused=24 writer_retry_after_release=true producer_first=true monitor_busy_retry=true committed_fence=true rollback=true precommit_rollback=true expiry=true');
     }finally{await monitor?.close();await Promise.all(pools.map(p=>p.close()));await rm(root,{recursive:true,force:true});}
   },{port,allowedPorts:Array.from({length:10},(_,i)=>port+i),database:'snapshot_sources',boundMs:500000});

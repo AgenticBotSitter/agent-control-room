@@ -143,7 +143,7 @@ export function createLoopSelectionSourceFilesV1(input: { availabilityFile: stri
   });
 }
 
-type Deadline = Readonly<{ frozenMono: number; deadlineMono: number; frozenWall: number }>;
+type Deadline = Readonly<{ frozenMono: number; frozenMonoEnd: number; deadlineMono: number; frozenWall: number }>;
 type Scope = { files: LoopSelectionSourceFilesV1; live: boolean; lease?: LoopSelectionSourceLeaseV1;
   checks: Set<() => Promise<void>>; deadline?: Deadline };
 const scopes = new WeakMap<DatabaseSession, Scope>();
@@ -157,6 +157,7 @@ export function bindLoopSelectionSourceDeadlineV1(tx: DatabaseSession, value: De
   const scope = scopeOf(tx);
   if (scope.deadline || !Number.isSafeInteger(value.frozenWall) || value.frozenWall < 0
     || !Number.isFinite(value.frozenMono) || value.frozenMono < 0 || !Number.isFinite(value.deadlineMono)
+    || !Number.isFinite(value.frozenMonoEnd) || value.frozenMonoEnd < value.frozenMono
     || value.deadlineMono <= value.frozenMono || value.deadlineMono > value.frozenMono + 5000) throw unavailable();
   scope.deadline = Object.freeze({ ...value });
 }
@@ -251,9 +252,9 @@ export class LoopSelectionSnapshotCoordinatorV1 implements LoopSelectionSnapshot
     const validate = async () => {
       const current = this.input.sourceFiles.current(scope.lease!, this.#now().wall), sources = await this.#sources(tx);
       const at = this.#now(), d = scope.deadline!;
-      // The wall read lies between the monotonic samples; a sampling pause is
-      // valid, but disagreement outside that interval (plus rounding) is not.
-      const elapsedMin = at.monoStart - d.frozenMono, elapsedMax = at.mono - d.frozenMono, wallElapsed = at.wall - d.frozenWall;
+      // Both wall reads lie inside monotonic brackets; sampling pauses are valid,
+      // but disagreement outside those intervals (plus rounding) is not.
+      const elapsedMin = at.monoStart - d.frozenMonoEnd, elapsedMax = at.mono - d.frozenMono, wallElapsed = at.wall - d.frozenWall;
       if (elapsedMin < 0 || at.mono >= d.deadlineMono || wallElapsed < 0 || wallElapsed < elapsedMin - 2 || wallElapsed > elapsedMax + 2
         || Date.parse(sources.availability.checked_at) + 3600000 < at.wall + (d.deadlineMono - at.mono)
         || canonicalJson(sources) !== canonicalJson({ roster: current.roster, availability: current.availability })
