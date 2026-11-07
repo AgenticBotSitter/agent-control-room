@@ -817,6 +817,14 @@ test('#324 controlsDisabled force-stops an active dictation and discards the unc
     assert.equal(rec.state.stops, stopsBefore + 1, 'the recognition engine is stopped');
     assert.deepEqual(committed, [], 'a control-availability change is not a commit');
     assert.doesNotMatch(h.text(), /Heard:|unconfirmed words/, 'the unconfirmed transcript is discarded');
+    // Confirm must not offer a commit path while control availability is withdrawn.
+    const confirm = h.dom.window.document.querySelector('button[type="button"]') as HTMLButtonElement | null;
+    for (const button of Array.from(h.dom.window.document.querySelectorAll('button'))) {
+      if ((button.textContent ?? '').includes('Confirm')) {
+        assert.equal(button.disabled, true, 'Confirm is unavailable while controls are disabled');
+      }
+    }
+    assert.ok(confirm !== null);
     // A late event from the stopped session cannot resurrect the transcript.
     await act(async () => { rec.state.callbacks!.onEvent({ eventId: 'late', transcript: 'late words', isFinal: true }); });
     assert.deepEqual(committed, []);

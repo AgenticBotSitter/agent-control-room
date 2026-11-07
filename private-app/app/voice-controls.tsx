@@ -218,7 +218,7 @@ export function VoiceControlsSurface({ settings, recognition, synthesis, readCon
     <p data-field="voice-input-status" aria-live="polite">{voiceInputStateTextV1(inputState)}</p>
     {inputState === "listening" || inputState === "confirming" ? <>
       {heard.trim().length > 0 && <p data-field="voice-heard-preview">Heard: {heard}</p>}
-      <button type="button" onClick={confirmTranscript} disabled={heard.trim().length === 0}>Confirm: use these words</button>
+      <button type="button" onClick={confirmTranscript} disabled={heard.trim().length === 0 || controlsDisabled}>Confirm: use these words</button>
       <button type="button" onClick={cancelDictation}>Cancel: discard</button>
       <button ref={stopButton} type="button" onClick={() => {
         session.current += 1; preserveInputFocus();
