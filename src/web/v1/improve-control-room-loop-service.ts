@@ -813,7 +813,7 @@ export class ImproveControlRoomLoopServiceV1 {
       throw new LoopPolicyRefusedV1([{ code: "acknowledgement_not_applicable", explanation: "Review-family acceptance requires the current run override." }]);
     if (!body.acceptSameFamilyRisk && local) acknowledgement = await this.#desk.loopBridgeTransaction(identity, projectId, false,
       ({ tx, actor }) => this.#acceptedSelection(tx, projectId, requestId!, actor.id, base));
-    const frozenMono = performance.now(), frozenWall = this.clock(), deadlineMono = frozenMono + this.#freshness;
+    const frozenMono = performance.now(), frozenWall = this.clock(), frozenMonoEnd = performance.now(), deadlineMono = frozenMono + this.#freshness;
     if (body.acceptSameFamilyRisk === true) acknowledgement = { schema_version: 1, rule: "R296", run: base.loopRunId,
       by: "owner", accepted_at: new Date(frozenWall).toISOString(), acknowledgement: "same-family-risk-accepted" };
     const binding = loopBridgeBindingSchemaV1.parse({ ...base, ...(acknowledgement ? { sameFamilyAcknowledgement: acknowledgement } : {}) });
@@ -821,8 +821,11 @@ export class ImproveControlRoomLoopServiceV1 {
     freeze(binding);
     const commandId = `loop-command:${randomBytes(16).toString("hex")}`;
     const remaining = () => {
-      const elapsed = performance.now() - frozenMono, wall = this.clock() - frozenWall;
-      if (elapsed < 0 || wall < 0 || Math.abs(elapsed - wall) > 2 || performance.now() >= deadlineMono) throw unavailable();
+      const mono = performance.now(), wall = this.clock() - frozenWall, monoEnd = performance.now();
+      // Wall reads occur inside these monotonic intervals. Allow sampling pauses
+      // and millisecond rounding, while refusing disagreement outside the intervals.
+      const elapsedMin = mono - frozenMonoEnd, elapsedMax = monoEnd - frozenMono;
+      if (mono < frozenMono || wall < 0 || wall < elapsedMin - 2 || wall > elapsedMax + 2 || performance.now() >= deadlineMono) throw unavailable();
       return Math.floor(deadlineMono - performance.now());
     };
     try { if (this.#selectionReady?.() !== true) throw unavailable(); } catch { throw unavailable(); }

@@ -348,17 +348,18 @@ test('U81 project preview browser client is a bounded same-origin POST with no a
 });
 
 test('U81 T3 existing intake applies the new-run false reset before checker, retaining unrelated edits', async t => {
-  const f = await taskFixture(); t.after(() => f.db.close());
+  const started = performance.now(), clock = () => now + Math.floor(performance.now() - started);
+  const f = await taskFixture(clock); t.after(() => f.db.close());
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}','{"templateId":"control-room"}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const checked: string[] = [];
   const policy = new LoopPolicyServiceV1(f.client, scope, {
     settingsText: '{"overrides":{"reviewFamily":true,"standardFinal":true},"inherited":17}',
     checkSettings: async text => { checked.push(text); return { eligible: false, reasons: [{ code: 'SYNTHETIC_STOP', explanation: 'Recorded checker stop' }],projection:projection(),snapshot }; },
-  }, () => now);
+  }, clock);
   const adapter = { adapterId: 'adapter:fixture', toolingRevision: `sha256:${'a'.repeat(64)}`,
     schemaDigest: `sha256:${'b'.repeat(64)}`, contract: {}, available: () => true, reserveRun:()=>'fixture-reset-run' } as unknown as LoopAdapterV1;
   const service = new ImproveControlRoomLoopServiceV1(f.client, scope,
-    { integrityKey: new Uint8Array(32).fill(65), adapter, policy, selectionReady:()=>true,selectionGuard:{capture:async()=>snapshot,assertCurrent:async()=>{}} }, () => now);
+    { integrityKey: new Uint8Array(32).fill(65), adapter, policy, selectionReady:()=>true,selectionGuard:{capture:async()=>{ await new Promise(resolve => setTimeout(resolve, 25)); return snapshot; },assertCurrent:async()=>{}} }, clock);
   for (const overrides of [undefined, { reviewFamily: false, standardFinal: false }, { reviewFamily: true, standardFinal: false }]) {
     const edits = { ...selection(), roles: { ...selection().roles, extra_role: { kept: true } }, kept: ['unchanged'], ...(overrides ? { overrides } : {}) };
     await assert.rejects(service.intakeSelection(f.identity,f.project.projectId,
@@ -454,9 +455,12 @@ test('U81-B R2 fresh intake intent checks the full frozen candidate before creat
 });
 
 /** Deterministic recorded engine with signed receipts. It never spawns or calls a provider. */
-async function selectionAdmissionFixture(t: TestContext, freshness=5000) {
+async function selectionAdmissionFixture(t: TestContext, freshness=5000, beforeClockRead?: () => void) {
   let offset=0;
-  const started = performance.now(), clock = () => now + offset + Math.floor(performance.now() - started);
+  const started = performance.now(), clock = () => {
+    beforeClockRead?.();
+    return now + offset + Math.floor(performance.now() - started);
+  };
   const f = await taskFixture(clock); t.after(() => f.db.close());
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"templateId":"control-room"}'::jsonb) WHERE id=$1`, [f.project.projectId]);
@@ -597,6 +601,36 @@ test('U81-B T12 current-reader delay cannot reset the candidate deadline',async 
   assert.equal((await f.db.query('SELECT * FROM control_loop_improvement_commands')).rows.length,0);
   assert.equal((await f.db.query('SELECT * FROM control_loop_improvement_requests')).rows.length,0);
 });
+
+for (const phase of ['freeze', 'remaining'] as const) {
+  test(`U81-B T12 scheduler delay during ${phase} clock sampling preserves valid admission`, async t => {
+    let delay = false, delayedReads = 0;
+    const f = await selectionAdmissionFixture(t, 5000, () => {
+      if (!delay) return;
+      delay = false; delayedReads++;
+      // Pause before sampling wall time, as if preempted after the monotonic read.
+      const until = performance.now() + 25;
+      while (performance.now() < until) { /* bounded scheduler pause */ }
+    });
+    if (phase === 'freeze') t.mock.method(f.adapter, 'reserveRun', () => { delay = true; return 'fixture-u81-run'; });
+    else t.mock.method(f.guard, 'capture', async () => { delay = true; return snapshot; });
+    assert.equal((await f.intake(true)).state, 'accepted');
+    assert.equal(delayedReads, 1); assert.equal(f.checks.length, 1); assert.equal(f.spawns, 1);
+  });
+}
+
+for (const jump of [-250, 250]) {
+  test(`U81-B T12 wall jump ${jump} ms during capture refuses before checker or authority`, async t => {
+    const f = await selectionAdmissionFixture(t);
+    const checker = t.mock.method(f.policy, 'checkWith', async () => { assert.fail('clock jump reached checker'); });
+    t.mock.method(f.guard, 'capture', async () => { f.advanceTime(jump); return snapshot; });
+    await assert.rejects(f.intake(true), /loop_bridge_contract_unavailable/);
+    assert.equal(checker.mock.callCount(), 0);
+    assert.equal(f.checks.length, 0); assert.equal(f.spawns, 0);
+    for (const table of ['control_loop_improvement_requests', 'control_loop_policy_input_sources', 'control_loop_improvement_commands'])
+      assert.equal((await f.db.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  });
+}
 
 test('U81-B T8 same key changed body conflicts without rechecking or dispatching',async t=>{
   const f=await selectionAdmissionFixture(t);await f.intake(true);
