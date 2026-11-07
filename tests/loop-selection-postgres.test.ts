@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {execFileSync} from 'node:child_process';
-import {readFile,writeFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {Client} from 'pg';
 import {randomBytes} from 'node:crypto';
 import {privateWebSchemaDigest} from '../src/web/v1/private-database-preflight';
 import {withRealPostgres,requiresRealPostgres} from './support/attack-kit/index';
 import {readPrivateWebSchemaDigest} from '../src/web/v1/private-database-preflight';
 import {digestReleaseSchemaRowsV1} from '../src/updater/v1/pg/release-schema-digest.mjs';
+
+// The schema artifact and D36 engine both use checkout scratch, even when
+// PostgreSQL itself runs under a separately supplied temporary root.
+test.before(() => mkdir('.test-tmp',{recursive:true}));
 
 test('U81-B PG17 strict acknowledgement schema and production timestamp helper',async()=>{
   assert.ok(requiresRealPostgres(),'PG17 required');
