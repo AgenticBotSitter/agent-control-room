@@ -1,6 +1,6 @@
 import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
 import { runUnits } from "./run-scripts-keep-going.mjs";
@@ -371,6 +371,8 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   tests = selectTestShard(tests, shard);
   if (shard) console.log(`Affected shard ${shard.index}/${shard.count}: ${tests.length} of ${selectedCount} execution file(s).`);
   if (tests.length === 0) return 0;
+  // Every shard starts independently of test-file ordering in another leg.
+  mkdirSync(join(repositoryRoot, ".test-tmp"), { recursive: true });
   if (requiresPostgres(result, tests, repositoryRoot) && !postgresAvailable()) {
     console.error("Selected test plan requires PostgreSQL 17 binaries, but PG_BIN does not contain initdb, pg_ctl, postgres, and psql.");
     return 1;

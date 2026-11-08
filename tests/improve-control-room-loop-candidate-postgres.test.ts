@@ -304,6 +304,7 @@ test("B4 PostgreSQL empty down re-up and failed migration preserve prior ledger"
   await admin.query(await readFile("db/down/0304_control_loop_candidate_start_authorization.sql","utf8"));
   await admin.query(await readFile("db/down/0303_control_loop_update_candidates.sql","utf8"));
   await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0303%' OR filename LIKE 'db/migrations/0304%' OR filename LIKE 'db/migrations/0305%' OR filename LIKE 'db/migrations/0307%' OR filename LIKE 'db/migrations/0308%' OR filename LIKE 'db/migrations/0309%' OR filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+  await mkdir(resolve(".test-tmp"), { recursive: true });
   const stage=await mkdtemp(resolve(".test-tmp/b4-ledger-"));
   try{
    await mkdir(join(stage,"db/migrations"),{recursive:true});await mkdir(join(stage,"deploy/postgres"),{recursive:true});
@@ -393,6 +394,7 @@ async function migrateRoot(pg:Pg,rootDir:string){
 }
 
 test("B4 BASE upgrade preserves signed 0301 and 0302 history",async()=>run(async pg=>{
+ await mkdir(resolve(".test-tmp"), { recursive: true });
  const stage=await mkdtemp(resolve(".test-tmp/b4-base-")),base="11fba7c7899319ee0e21e5849bd77f010b1f2cc0";
  let fixture:Awaited<ReturnType<typeof syntheticFixture>>|undefined;
  try{
@@ -644,6 +646,7 @@ test('S2 PostgreSQL 20 separate refresh callers at source barrier one winner and
 
 test('S2 PostgreSQL failed price migration leaves neither table nor ledger entry and retries cleanly',async()=>run(async pg=>{
  const admin=new Client(pg.admin());await admin.connect();
+ await mkdir(resolve(".test-tmp"), { recursive: true });
  const stage=await mkdtemp(resolve('.test-tmp/s2-migration-'));
  try{
   await admin.query(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));

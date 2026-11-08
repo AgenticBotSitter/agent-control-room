@@ -233,6 +233,7 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
 }
 
 async function greenCommand(copy: string, testCmd: string[]) {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
   const scratch = await mkdtemp(resolve(".test-tmp/b1a-green-")), started = Date.now();
   try {
     const child = spawn(testCmd[0]!, testCmd.slice(1), { cwd: copy, detached: true,

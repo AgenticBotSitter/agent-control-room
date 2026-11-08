@@ -853,3 +853,21 @@ test("the CLI refuses an invalid shard before selection or execution", () => {
   assert.match(child.stderr, /AFFECTED_TEST_SHARD requires 1 <= index <= count/u);
   assert.doesNotMatch(child.stdout, /Running|Affected shard/u);
 });
+
+test("affected shards create scratch parents before executing files in a clean repository", () => {
+  const root = fixture({
+    "tests/scratch.test.mjs": `import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+test("allocates scratch without an earlier file", () => {
+  const directory = mkdtempSync(join(process.cwd(), ".test-tmp", "isolated-"));
+  rmSync(directory, { recursive: true });
+});`,
+  });
+  try {
+    assert.equal(existsSync(join(root, ".test-tmp")), false);
+    assert.equal(runAffectedTests(["tests/scratch.test.mjs"], ["tests/scratch.test.mjs"], root,
+      undefined, undefined, executePlainFixture, { index: 1, count: 8 }), 0);
+    assert.equal(existsSync(join(root, ".test-tmp")), true);
+  } finally { rmSync(root, { recursive: true }); }
+});
