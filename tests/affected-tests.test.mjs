@@ -13,11 +13,13 @@ import {
   isDocumentationOnly,
   NODE_TEST_TIMEOUT_MS,
   noTestsAffectedMessage,
+  parseTestShard,
   requestedBaseRef,
   requiresPostgres,
   runAffectedTests,
   runSelectedTests,
   selectionOutputs,
+  selectTestShard,
   shouldDeferToFullSuite,
   skippedTestExemptions,
 } from "../scripts/ci/affected-tests.mjs";
@@ -689,4 +691,117 @@ test("the Linux affected job defers exact macOS updater files even on the ALL Po
       (_command, args) => { macCalls.push(args.at(-1)); return { status: 0, output: "" }; }, "darwin"), 0);
     assert.deepEqual(macCalls, [mac], "a Mac fast job may run the selected updater test directly");
   } finally { rmSync(root, { recursive: true }); }
+});
+
+test("shard input fails closed and an unset shard preserves local execution", () => {
+  assert.equal(parseTestShard(undefined), undefined);
+  assert.deepEqual(parseTestShard("2/8"), { index: 2, count: 8 });
+  for (const value of ["", "0/8", "9/8", "1/0", "1", "1/8/9", "1.5/8", "01/8", "-1/8", "1/9007199254740992"])
+    assert.throws(() => parseTestShard(value), /AFFECTED_TEST_SHARD/u, value);
+  assert.throws(() => selectTestShard(["a"], { index: 0, count: 8 }), /AFFECTED_TEST_SHARD/u);
+  const files = ["b", "a"];
+  assert.equal(selectTestShard(files, undefined), files);
+  assert.deepEqual(selectTestShard(files, { index: 1, count: 2 }), ["a"]);
+  assert.deepEqual(files, ["b", "a"], "partitioning must not mutate the source plan");
+});
+
+test("every selected file belongs to exactly one shard, including empty and uneven plans", () => {
+  for (const length of [0, 1, 7, 8, 9, 143, 953]) {
+    const files = Array.from({ length }, (_, index) => `tests/t${index}.test.mjs`);
+    const parts = Array.from({ length: 8 }, (_, index) => selectTestShard(files, { index: index + 1, count: 8 }));
+    assert.deepEqual(parts.flat().sort(), [...files].sort());
+    assert.equal(new Set(parts.flat()).size, length);
+    assert.ok(Math.max(...parts.map(part => part.length)) - Math.min(...parts.map(part => part.length)) <= 1);
+  }
+});
+
+test("sharding the final plan preserves commands and environments after bulk and macOS deferral", () => {
+  const files = Object.fromEntries(Array.from({ length: 210 }, (_, index) =>
+    [`tests/t${index}.test.mjs`, index % 2 === 0 ? "// requiresRealPostgres; dist-vps" : "// dist-contributor"]));
+  const mac = "tests/mac.test.mjs", exempt = "tests/automatic-claim-controller.test.mjs";
+  files[mac] = "// requiresRealPostgres";
+  files[exempt] = "// requiresRealPostgres";
+  files["package.json"] = JSON.stringify({ scripts: { "test:updater": `node --test ${mac}` } });
+  const root = fixture(files), tests = listTestFiles(root);
+  function plan(result, shard) {
+    const calls = [], builds = [];
+    assert.equal(runSelectedTests(result, result === "ALL" || result === "DOCS_ONLY" ? tests : result,
+      root, (command, args) => { builds.push([command, args]); return 0; }, () => true,
+      (command, args, _root, env) => { calls.push({ file: args.at(-1), command, args, env }); return { status: 0, output: "# skipped 0\n" }; },
+      "linux", shard), 0);
+    return { calls, builds };
+  }
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    for (const result of ["ALL", tests.slice(0, 140), [mac, exempt, "tests/t0.test.mjs", "tests/t1.test.mjs"], "DOCS_ONLY"]) {
+      const baseline = plan(result);
+      const shards = Array.from({ length: 8 }, (_, index) => plan(result, { index: index + 1, count: 8 }));
+      const calls = shards.flatMap(shard => shard.calls);
+      const byFile = calls => [...calls].sort((a, b) => a.file.localeCompare(b.file));
+      assert.deepEqual(byFile(calls), byFile(baseline.calls), "full commands and environments must match the unsharded execution plan");
+      assert.equal(new Set(calls.map(call => call.file)).size, baseline.calls.length);
+      for (const shard of shards) {
+        if (shard.calls.length === 0) assert.deepEqual(shard.builds, []);
+        else {
+          const files = shard.calls.map(call => call.file);
+          const commands = affectedTestCommands(files, files, root);
+          assert.deepEqual(shard.builds, commands.slice(0, commands.length - files.length),
+            "each nonempty shard must prepare the builds its own files read");
+        }
+      }
+      if (result === "ALL") {
+        assert.equal(calls.length, 105, "bulk deferral must happen before partitioning");
+        assert.ok(!calls.some(call => call.file === mac || call.file === exempt));
+      }
+    }
+  } finally { console.log = originalLog; rmSync(root, { recursive: true }); }
+});
+
+test("each shard retains real failure and unexempted-skip refusal while continuing later files", () => {
+  const names = ["a", "b", "c", "d", "e"].map(name => `tests/${name}.test.mjs`);
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [];
+  try {
+    const status = runAffectedTests(names, names, root, () => 0, () => true, (_cmd, args) => {
+      const file = args.at(-1);
+      calls.push(file);
+      return { status: file === names[0] ? 9 : 0, output: file === names[2] ? "# skipped 1\n" : "# skipped 0\n" };
+    }, { index: 1, count: 2 });
+    assert.equal(status, 9);
+    assert.deepEqual(calls, [names[0], names[2], names[4]]);
+    assert.equal(runAffectedTests(names, names, root, () => 0, () => true,
+      () => ({ status: 0, output: "# skipped 1\n" }), { index: 2, count: 2 }), 1);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("the real repository's broad execution plan survives all eight shards unchanged", () => {
+  const root = process.cwd(), tests = listTestFiles(root);
+  const originalLog = console.log;
+  console.log = () => {};
+  const plan = shard => {
+    const calls = [];
+    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true,
+      (command, args, _cwd, env) => { calls.push({ file: args.at(-1), command, args, env }); return { status: 0, output: "# skipped 0\n" }; },
+      "linux", shard), 0);
+    return calls;
+  };
+  try {
+    const baseline = plan(undefined);
+    const combined = Array.from({ length: 8 }, (_, index) => plan({ index: index + 1, count: 8 })).flat();
+    const sorted = calls => [...calls].sort((a, b) => a.file.localeCompare(b.file));
+    assert.ok(baseline.length > 100, "exercise the actual broad PostgreSQL workload");
+    assert.deepEqual(sorted(combined), sorted(baseline));
+    assert.equal(new Set(combined.map(call => call.file)).size, baseline.length);
+  } finally { console.log = originalLog; }
+});
+
+test("the CLI refuses an invalid shard before selection or execution", () => {
+  const script = fileURLToPath(new URL("../scripts/ci/affected-tests.mjs", import.meta.url));
+  const child = spawnSync(process.execPath, [script, "--run"], { encoding: "utf8", timeout: 5_000,
+    env: { ...process.env, AFFECTED_TEST_SHARD: "9/8" } });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /AFFECTED_TEST_SHARD requires 1 <= index <= count/u);
+  assert.doesNotMatch(child.stdout, /Running|Affected shard/u);
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -632,4 +633,32 @@ test("the decision is rendered in the shape the workflow consumes", () => {
   assert.match(rendered, /^quick=true$/mu);
   assert.match(rendered, /^full=(true|false)$/mu);
   assert.match(rendered, /^gate=/mu);
+});
+
+test("affected shards keep an unconditional eight-way matrix and isolated setup", () => {
+  const job = workflow.slice(workflow.indexOf("  affected-tests:"), workflow.indexOf("\n  route:"));
+  assert.match(job, /^    name: Affected tests \(fast, \$\{\{ matrix\.shard \}\}\/8\)$/mu);
+  assert.match(job, /^    timeout-minutes: 240$/mu, "sharding must not raise the timeout");
+  assert.match(job, /^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3, 4, 5, 6, 7, 8\]$/mu);
+  assert.match(job, /^      AFFECTED_TEST_SHARD: \$\{\{ matrix\.shard \}\}\/8$/mu);
+  assert.doesNotMatch(job, /^    (?:if|continue-on-error):/mu, "every shard is mandatory");
+  assert.doesNotMatch(job, /max-parallel:|exclude:|include:/u);
+  assert.match(job, /if: \$\{\{ always\(\) && steps\.selection\.outputs\.needs-pg == 'true' \}\}/u);
+  assert.match(job, /persist-credentials: false/u);
+  assert.match(job, /pnpm install --frozen-lockfile --ignore-scripts/u);
+});
+
+test("the merge gate accepts only a successful affected matrix result", () => {
+  const source = workflow.slice(workflow.indexOf("  merge-gate:"));
+  const gate = source.slice(source.indexOf("          set -euo pipefail"));
+  for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+    const script = gate.replace(/\$\{\{ needs\.([a-z-]+)\.result \}\}/gu,
+      (_, name) => name === "affected-tests" ? result : "success");
+    assert.doesNotMatch(script, /\$\{\{/u);
+    const child = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000,
+      env: { ...process.env, COMPONENTS_ROUTED: "true" } });
+    assert.equal(child.error, undefined);
+    assert.equal(child.signal, null);
+    assert.equal(child.status, result === "success" ? 0 : 1, `affected matrix result=${result}: ${child.stdout}`);
+  }
 });
