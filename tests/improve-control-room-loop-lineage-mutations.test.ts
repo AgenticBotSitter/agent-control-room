@@ -1,10 +1,11 @@
 // Dedicated lane only. Every mutation runs with its baseline in an owned clean
 // local clone; no guard in the developer checkout is ever disabled.
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { Client } from "pg";
 import { getConstructionPlans, PgBoss } from "pg-boss";
 import { assertGuardBites, reapKitClusters, resolvePgBin, ROLE_LOGINS, withRealPostgres, type RealPostgres } from "./support/attack-kit/index";
@@ -12,6 +13,28 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 
 import { assertMutationLaneCoverage } from "../scripts/check-test-lane-coverage.mjs";
+
+// Both workers run in this one process, each holding live database clients. A
+// synchronous child process here freezes the event loop for every worker: a
+// peer's in-flight query (the applier's schema-digest read returns a result far
+// larger than the socket buffer, under the migration's own `SET LOCAL
+// statement_timeout = '5s'`) is then not read, the server keeps counting the
+// time it spends blocked sending, and the migration fails with "canceling
+// statement due to statement timeout". Every child process below is therefore
+// asynchronous, with the same command, bound and output limits as before.
+const execFileAsync = promisify(execFile);
+const execText = async (file: string, args: string[], options: Record<string, unknown> = {}) =>
+  (await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, ...options })).stdout;
+const runInherited = (file: string, args: string[], options: { cwd: string; timeout: number; env: NodeJS.ProcessEnv }) =>
+  new Promise<void>((settle, reject) => {
+    const child = spawn(file, args, { cwd: options.cwd, env: options.env, stdio: "inherit" });
+    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`${file} timed out after ${options.timeout}ms`)); }, options.timeout);
+    child.once("error", error => { clearTimeout(timer); reject(error); });
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) settle(); else reject(new Error(`${file} exited with code ${code} signal ${signal}`));
+    });
+  });
 
 const root = resolve("."), service = "src/improve-control-room/v1/service.ts";
 const migration = "db/migrations/0301_control_loop_improvement_lineage.sql";
@@ -183,22 +206,22 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
         try { for (const queue of ["native-task-delivery", "news-feed-collection"]) await boss.createQueue(queue, { retryLimit: 0 }); }
         finally { await boss.stop({ graceful: false }); }
       } finally { await fresh.end(); }
-      const schema = (database: string) => {
+      const schema = async (database: string) => {
         const config = postgres.admin({ database });
-        return execFileSync(join(resolvePgBin()!, "pg_dump"), ["--schema-only", "--no-owner", "--no-privileges"],
-          { encoding: "utf8", timeout: 30000, maxBuffer: 16 * 1024 * 1024,
+        return (await execText(join(resolvePgBin()!, "pg_dump"), ["--schema-only", "--no-owner", "--no-privileges"],
+          { timeout: 30000,
           env: { NODE_ENV: "test", PATH: process.env.PATH, PGHOST: config.host, PGPORT: String(config.port), PGDATABASE: database,
-            PGUSER: config.user, PGPASSWORD: config.password } })
+            PGUSER: config.user, PGPASSWORD: config.password } }))
           .replace(/^\\(?:un)?restrict .*$/gmu, "");
       };
-      const expected = schema("b1a_fresh_prefix");
-      const check = () => assert.equal(schema(postgres.database), expected, "B1a prepared schema equals independently migrated fresh prefix");
-      check();
+      const expected = await schema("b1a_fresh_prefix");
+      const check = async () => assert.equal(await schema(postgres.database), expected, "B1a prepared schema equals independently migrated fresh prefix");
+      await check();
       // Exercise the refusal with actual catalog residue, then restore it.
       await admin.query("CREATE TABLE public.b1a_down_residue_probe(id integer)");
-      try { assert.throws(check, /B1a prepared schema equals independently migrated fresh prefix/u); }
+      try { await assert.rejects(check, /B1a prepared schema equals independently migrated fresh prefix/u); }
       finally { await admin.query("DROP TABLE public.b1a_down_residue_probe"); }
-      check();
+      await check();
       console.log("B1a prepared prefix schema_equal=true residue_refused=true");
     } finally { await admin.query('DROP DATABASE "b1a_fresh_prefix" WITH (FORCE)'); }
   } finally { await admin.end(); }
@@ -209,7 +232,7 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
   // disposable cluster; never environment or installation credentials.
   await writeFile(fixture, JSON.stringify({ admin: postgres.admin(), connections, suffix }), { mode: 0o600 });
   await writeFile(join(copy, "tests/.b1a-prepared-postgres.mjs"), preparedRunner);
-  execFileSync(process.execPath, ["--input-type=module", "--eval", `
+  await runInherited(process.execPath, ["--input-type=module", "--eval", `
     import assert from "node:assert/strict";
     import { setTimeout as delay } from "node:timers/promises";
     import { withRealPostgres } from "./tests/.b1a-prepared-postgres.mjs";
@@ -221,7 +244,7 @@ async function preparePostgres(copy: string, postgres: RealPostgres) {
     const result = await withRealPostgres(() => "within bound", { ...options, allowedPorts: [options.port], boundMs: 500000 }, () => {});
     assert.equal(result.value, "within bound"); assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []);
     console.log("B1a prepared allowedPorts_refused=true body_timeout=true timer_cleared=true cleanedUp=true leftovers=0");
-  `], { cwd: copy, timeout: 30000, stdio: "inherit", env: { ...process.env, NODE_TEST_CONTEXT: undefined, B1A_MUTATION_FIXTURE: fixture } });
+  `], { cwd: copy, timeout: 30000, env: { ...process.env, NODE_TEST_CONTEXT: undefined, B1A_MUTATION_FIXTURE: fixture } });
   const original = await readFile(join(copy, "tests/improve-control-room-desk-postgres.test.ts"), "utf8");
   const factory = "realPostgresSkipMessage, requiresRealPostgres, withRealPostgres";
   assert.equal(original.split(factory).length, 2);
@@ -279,9 +302,9 @@ test("B1a guard-off proofs in clean local disposable copies", { timeout: 550_000
     const setupAt = Date.now(), copy = await mkdtemp(resolve(".test-tmp/b1a-mutations-"));
     const port = 58480 + slot * 5;
     try {
-      execFileSync("git", ["-c", "core.hooksPath=/dev/null", "clone", "--local", "--no-hardlinks", "--quiet", root, copy], { timeout: 120000 });
-      assert.equal(execFileSync("git", ["-C", copy, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-        execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+      await execText("git", ["-c", "core.hooksPath=/dev/null", "clone", "--local", "--no-hardlinks", "--quiet", root, copy], { timeout: 120000 });
+      assert.equal((await execText("git", ["-C", copy, "rev-parse", "HEAD"])).trim(),
+        (await execText("git", ["rev-parse", "HEAD"])).trim());
       await symlink(join(root, "node_modules"), join(copy, "node_modules"), "dir");
       console.log(`B1a worker ${slot} copy_setup_ms=${Date.now() - setupAt}`);
       const run = async (probe: Probe, fixture?: string) => t.test(probe.name, async () => {
@@ -321,7 +344,7 @@ test("B1a guard-off proofs in clean local disposable copies", { timeout: 550_000
       }, { port, allowedPorts: Array.from({ length: 5 }, (_, i) => port + i), database: "b1a_mutation_template", boundMs: 500_000 });
       assert.equal(result.cleanedUp, true); assert.deepEqual(result.leftovers, []);
       console.log(`B1a worker ${slot} cluster cleanedUp=true leftovers=0`);
-      assert.equal(execFileSync("git", ["-C", copy, "status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim(), "");
+      assert.equal((await execText("git", ["-C", copy, "status", "--porcelain", "--untracked-files=no"])).trim(), "");
     } finally { await rm(copy, { recursive: true, force: true }); }
   }));
   for (const worker of workers) if (worker.status === "rejected") throw worker.reason;
