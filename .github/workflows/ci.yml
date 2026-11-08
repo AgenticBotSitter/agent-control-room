@@ -56,7 +56,7 @@ jobs:
     # original command, environment, skip guard and 20-minute per-file budget.
     # Budget/security: public standard runners; seven extra copies of setup,
     # up to eight concurrent allocations, no new permissions or credentials.
-    timeout-minutes: 240
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

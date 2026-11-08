@@ -284,13 +284,13 @@ rehearsal makes the revision non-merge-ready.
 ## Amendment: affected tests (fast)
 
 The `Affected tests (fast)` job is a second, merge-gated proof for the files changed by
-a pull request. It has a 45-minute timeout. A normal source edit runs its importing test
-files; uncertainty, configuration, assets and other unclassified paths run the complete
+a pull request. Each shard has a 120-minute timeout, as reviewed below. A normal source
+edit runs its importing test files; uncertainty, configuration, assets and other unclassified paths run the complete
 test plan. This duplicates the complete plan when the selector returns `ALL`, which is
 intentional: it exposes a source-to-test failure before the lane catch-up and merge gate
-finish. The maximum additional hosted-run cost is therefore one 45-minute runner plus a
-conditional PostgreSQL installation; observed cost must be re-evaluated before increasing
-that timeout or broadening the selector.
+finish. The maximum additional hosted-run allocation is eight standard runners for
+120 minutes each, including their conditional PostgreSQL installations; observed cost must be
+re-evaluated before increasing that timeout or broadening the selector.
 
 For selected PostgreSQL tests, the job installs PostgreSQL 17 and starts one loopback-only,
 disposable cluster. It exports the narrowly scoped test gates and two URLs to that cluster,
@@ -326,7 +326,7 @@ a running server. The job materialises that reviewed, immutable commit with `git
 an owner-only `RUNNER_TEMP` directory, supplies that path only to the PG17 upgrade test, verifies
 that its ledger is pre-0086, and removes it in the existing always-cleanup. Full-history checkout
 makes the exact object available; the step does not fetch, execute, or grant access to any external
-source. Its bounded temporary tree is part of the same 45-minute job and adds no cache, artifact,
+source. Its bounded temporary tree is part of each 120-minute shard and adds no cache, artifact,
 credential, privileged filesystem change, or persistent host state.
 
 The migration safety tests invoke `squawk` directly. The fast runner is therefore wrapped
@@ -516,3 +516,32 @@ the whole matrix. The component catch-up preserves the baseline exclusion of
 `test:mac-upgrade`; this amendment does not claim to close that existing gap.
 The guard executes the real gate Bash over literal result/output combinations;
 hosted scheduler behavior and timing still require the actual Actions run.
+
+## Amendment: sharded affected tests
+
+The affected-test job now has eight mandatory matrix legs, with a 120-minute timeout
+per leg, allowing up to eight concurrent standard runners on `ubuntu-latest`. The
+maximum affected-matrix allocation is 960 runner-minutes (16 runner-hours), compared
+with the previous single runner's 240-minute cap. Public standard-runner minutes
+retain the billing assumption above; concurrency and queue pressure still increase.
+
+Relative to the single job, this adds seven extra copies of setup: checkout,
+frozen dependency installation with lifecycle scripts disabled, tool preparation,
+conditional PostgreSQL 17 installation, and the immutable pre-0086 fixture and
+loopback cluster with always-cleanup. Build preparation is also local to each leg,
+including both `pnpm build` and `pnpm run build:demo` in every nonempty leg under `ALL`.
+After bulk deferral, the retained file selection instead determines each leg's builds.
+Each leg owns its VM, temporary files, database and ports; no test state is shared.
+
+The prior per-file timing replay estimates the worst leg at about 60 minutes including
+setup. Doubling measured test durations and allowing ten minutes for setup gives
+about 117 minutes, within the 120-minute cap. These estimates are not a hosted matrix
+benchmark; actual scheduling, setup contention and runtime variance need hosted proof.
+
+Sharding partitions the final execution list after macOS and bulk deferral, preserving
+coverage, commands, environments and skip refusal. Files remain serial within each leg.
+The merge gate requires the whole affected matrix to succeed; failure, cancellation,
+skipping or a missing result blocks it. No new permissions, credentials, secrets,
+actions, dependencies, artifact uploads, deployments or private runners are introduced.
+The existing pinned actions, read-only contents permission, `pull_request` trigger,
+checkout without persisted credentials and disposable-runner boundary remain in force.

@@ -229,7 +229,9 @@ export function parseTestShard(value) {
 export function selectTestShard(tests, shard) {
   if (shard === undefined) return tests;
   // Validate callers as well as CLI input, failing closed on malformed plans.
-  parseTestShard(`${shard.index}/${shard.count}`);
+  if (!Number.isSafeInteger(shard.index) || !Number.isSafeInteger(shard.count) ||
+      shard.index < 1 || shard.index > shard.count)
+    throw new Error("AFFECTED_TEST_SHARD requires 1 <= index <= count");
   return [...tests].sort().filter((_test, index) => index % shard.count === shard.index - 1);
 }
 
@@ -313,8 +315,10 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
   ].join("\n");
 }
 
-export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
-  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform, shard) {
+export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), {
+  execute = executeCommand, postgresAvailable = postgresBinariesAvailable,
+  executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform, shard,
+} = {}) {
   if (result === "DOCS_ONLY") {
     console.log(noTestsAffectedMessage());
     return 0;
@@ -422,7 +426,7 @@ function main() {
     console.log(result === "ALL" ? result : result.join("\n"));
     return;
   }
-  process.exitCode = runSelectedTests(result, tests, root, undefined, undefined, undefined, process.platform, shard);
+  process.exitCode = runSelectedTests(result, tests, root, { platform: process.platform, shard });
 }
 
 if (isMainModuleV1(process.argv[1], import.meta.url)) main();

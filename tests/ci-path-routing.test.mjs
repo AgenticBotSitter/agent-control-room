@@ -331,7 +331,11 @@ test("split mutation jobs prepare the protected macOS scratch directory", () => 
 
 test("the affected-test automation has the required budget and security review", () => {
   assert.match(budgetSecurityReview, /## Amendment: affected tests \(fast\)/u);
-  assert.match(budgetSecurityReview, /45-minute timeout/u);
+  assert.match(budgetSecurityReview, /## Amendment: sharded affected tests/u);
+  assert.match(budgetSecurityReview, /120-minute timeout/u);
+  assert.match(budgetSecurityReview, /eight concurrent standard runners/u);
+  assert.match(budgetSecurityReview, /seven extra copies of setup/u);
+  assert.match(budgetSecurityReview, /both `pnpm build` and `pnpm run build:demo` in every nonempty leg under `ALL`/u);
   assert.match(budgetSecurityReview, /squawk-cli@2\.61\.0/u);
   assert.match(budgetSecurityReview, /fails if any non-exempt stream reports any skipped test/u);
   assert.match(budgetSecurityReview, /15-entry skipped-test exemption/u);
@@ -638,7 +642,9 @@ test("the decision is rendered in the shape the workflow consumes", () => {
 test("affected shards keep an unconditional eight-way matrix and isolated setup", () => {
   const job = workflow.slice(workflow.indexOf("  affected-tests:"), workflow.indexOf("\n  route:"));
   assert.match(job, /^    name: Affected tests \(fast, \$\{\{ matrix\.shard \}\}\/8\)$/mu);
-  assert.match(job, /^    timeout-minutes: 240$/mu, "sharding must not raise the timeout");
+  const timeout = Number(job.match(/^    timeout-minutes: (\d+)$/mu)?.[1]);
+  assert.ok(timeout <= 240, "sharding must not raise the timeout");
+  assert.equal(timeout, 120, "each shard has the reviewed 120-minute timeout");
   assert.match(job, /^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3, 4, 5, 6, 7, 8\]$/mu);
   assert.match(job, /^      AFFECTED_TEST_SHARD: \$\{\{ matrix\.shard \}\}\/8$/mu);
   assert.doesNotMatch(job, /^    (?:if|continue-on-error):/mu, "every shard is mandatory");
