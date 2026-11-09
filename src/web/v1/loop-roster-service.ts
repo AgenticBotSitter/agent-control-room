@@ -8,6 +8,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import type { LoopRosterToolsV1 } from "./loop-roster-check";
 import { loopRosterColumnsV1, LoopRosterFormatError, loopRosterSha256V1, parseLoopRosterV1, renderLoopRosterV1,
   type LoopRosterRowV1 } from "./loop-roster-render";
+import type { LoopSelectionSourceParticipantV1, LoopRosterSnapshotSourceV1 } from "./loop-selection-snapshot";
 import { WebSessionAuthority } from "./session-authority";
 
 export const loopRosterExportNameV1 = "roster-export.tsv";
@@ -44,6 +45,20 @@ const toRow = (r: ModelRow): LoopRosterRowV1 => ({ name: r.name, launcher: r.lau
 const columnValues = (row: LoopRosterRowV1) => [row.launcher, row.provider, row.family, row.class, row.roles, row.efforts,
   row.default_effort, row.cost, row.on, row.note, row.nick, row.max_build_grade];
 
+async function readRoster(q: DatabaseSession, tenantId: string, lock = false) {
+  const state = (await q.query<StateRow>(`SELECT version, exported_version, exported_sha256, seeded_from, last_idempotency_key,
+    last_request_digest FROM control_loop_roster_state WHERE tenant_id=$1${lock ? " FOR UPDATE" : ""}`, [tenantId])).rows[0];
+  const models = (await q.query<ModelRow>(`SELECT * FROM control_loop_roster_models WHERE tenant_id=$1 ORDER BY position`, [tenantId])).rows;
+  return { state, models };
+}
+/** The coordinator uses exactly the roster master's reader and renderer. */
+export async function readLoopRosterSnapshotSourceV1(tx: DatabaseSession, tenantId: string): Promise<LoopRosterSnapshotSourceV1> {
+  const { state, models } = await readRoster(tx, tenantId);
+  if (!state || !models.length || state.exported_version == null || !state.exported_sha256) throw new Error("selection_source_unavailable");
+  return { version: String(state.version), exportedVersion: String(state.exported_version),
+    exportedSha256: state.exported_sha256, text: renderLoopRosterV1(models.map(toRow)) };
+}
+
 export type LoopRosterExportResultV1 = { exported: boolean; version: number | null; message?: string };
 export type LoopRosterEditResultV1 = { replayed: boolean; version: number; exported: boolean; message?: string };
 /** Test seam only: called at the two crash points of an export. Production passes nothing. */
@@ -58,7 +73,7 @@ export class LoopRosterServiceV1 {
   #startMessage: string | undefined;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly tools: LoopRosterToolsV1, private readonly clock: () => number = Date.now,
-    private readonly faults: LoopRosterFaultsV1 = {}) {
+    private readonly faults: LoopRosterFaultsV1 = {}, private readonly sources?: LoopSelectionSourceParticipantV1) {
     this.#authority = new WebSessionAuthority(db, scope, clock, "loop_roster");
   }
 
@@ -67,7 +82,8 @@ export class LoopRosterServiceV1 {
   async #rosterDirectory() {
     try {
       const stat = await lstat(this.tools.rosterRoot);
-      return stat.isDirectory() && !stat.isSymbolicLink() && await realpath(this.tools.rosterRoot) === this.tools.rosterRoot;
+      return stat.isDirectory() && !stat.isSymbolicLink() && await realpath(this.tools.rosterRoot) === this.tools.rosterRoot
+        && (!this.sources || stat.uid === process.getuid?.() && (stat.mode & 0o777) === 0o700);
     } catch { return false; }
   }
 
@@ -98,11 +114,7 @@ export class LoopRosterServiceV1 {
   }
 
   async #read(q: Pick<DatabaseSession, "query">, lock = false) {
-    const state = (await q.query<StateRow>(`SELECT version, exported_version, exported_sha256, seeded_from, last_idempotency_key,
-      last_request_digest FROM control_loop_roster_state WHERE tenant_id=$1${lock ? " FOR UPDATE" : ""}`, [this.scope.tenantId])).rows[0];
-    const models = (await q.query<ModelRow>(`SELECT * FROM control_loop_roster_models WHERE tenant_id=$1 ORDER BY position`,
-      [this.scope.tenantId])).rows;
-    return { state, models };
+    return readRoster(q, this.scope.tenantId, lock);
   }
 
   /** The only way a state row is created. A second call when a state row exists is refused. */
@@ -121,6 +133,8 @@ export class LoopRosterServiceV1 {
     const exported = label === "export-file" && canonical === text;
     const at = new Date(this.clock()).toISOString();
     await this.db.transaction(async tx => {
+      await this.sources?.lockSources(tx);
+      await this.sources?.invalidate(tx);
       const inserted = await tx.query(`INSERT INTO control_loop_roster_state(tenant_id,version,exported_version,exported_sha256,seeded_from,updated_at)
         VALUES($1,1,$2,$3,$4,$5) ON CONFLICT (tenant_id) DO NOTHING RETURNING tenant_id`,
       [this.scope.tenantId, label === "export-file" ? 1 : null, exported ? seedSha : null, `${label}:${seedSha}`, at]);
@@ -184,6 +198,16 @@ export class LoopRosterServiceV1 {
   }
 
   async #removeStale() {
+    if (this.sources) {
+      await this.db.transaction(async tx => {
+        await this.sources!.lockSources(tx);
+        // Check folders belong to their own calls; a source lease does not own them.
+        for (const entry of await readdir(this.tools.rosterRoot, { withFileTypes: true }))
+          if (entry.isFile() && /^roster-export\.tsv\.[a-f0-9]{32}\.tmp$/.test(entry.name))
+            await rm(join(this.tools.rosterRoot, entry.name), { force: true });
+      });
+      return;
+    }
     for (const entry of await readdir(this.tools.rosterRoot, { withFileTypes: true })) {
       if (entry.isDirectory() && /^check-[A-Za-z0-9]{6}$/.test(entry.name)
         || entry.isFile() && /^roster-export\.tsv\.[a-f0-9]{32}\.tmp$/.test(entry.name))
@@ -210,6 +234,27 @@ export class LoopRosterServiceV1 {
       message: `export pending (version ${version}, last export ${state.exported_version ?? "none"})` };
     try { await this.checkWithCr(text, models.length); }
     catch (error) { if (error instanceof LoopRosterRefusedV1) return pending; throw error; }
+    if (this.sources) return this.db.transaction(async tx => {
+      await this.sources!.lockSources(tx);
+      const fresh = await this.#read(tx, true);
+      if (!fresh.state || String(fresh.state.version) !== String(state.version)
+        || renderLoopRosterV1(fresh.models.map(toRow)) !== text) return pending;
+      await this.sources!.invalidate(tx);
+      const temporary = join(this.tools.rosterRoot, `${loopRosterExportNameV1}.${randomBytes(16).toString("hex")}.tmp`);
+      try {
+        const handle = await open(temporary, "wx", 0o600);
+        try { await handle.writeFile(text, "utf8"); await handle.sync(); } finally { await handle.close(); }
+        await this.faults.afterTemporaryWrite?.();
+        await rename(temporary, this.exportPath);
+        const directory = await open(this.tools.rosterRoot, "r");
+        try { await directory.sync(); } finally { await directory.close(); }
+        await this.faults.afterRename?.();
+        const recorded = await tx.query(`UPDATE control_loop_roster_state SET exported_version=$2, exported_sha256=$3
+          WHERE tenant_id=$1 AND version=$2 RETURNING tenant_id`, [this.scope.tenantId, version, loopRosterSha256V1(text)]);
+        if (recorded.rows.length !== 1) throw new Error("selection_source_unavailable");
+        return { exported: true, version };
+      } finally { await rm(temporary, { force: true }); }
+    });
     const temporary = join(this.tools.rosterRoot, `${loopRosterExportNameV1}.${randomBytes(16).toString("hex")}.tmp`);
     let crashed = false;
     try {
@@ -303,6 +348,7 @@ export class LoopRosterServiceV1 {
     await this.checkWithCr(text, candidate.length);
     const committed = await this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("roster.manage", undefined, true);
+      await this.sources?.lockSources(tx);
       const { state, models } = await this.#read(tx, true);
       if (!state) throw new WebAccessError("conflict");
       const again = replay(state);
@@ -310,6 +356,7 @@ export class LoopRosterServiceV1 {
       // The candidate cr saw must be exactly what commits: same version, therefore the same base rows.
       const { target, rows } = change(models.map(toRow));
       if (Number(state.version) !== expectedVersion || renderLoopRosterV1(rows) !== text) throw new WebAccessError("conflict");
+      await this.sources?.invalidate(tx);
       const at = actor.now, next = expectedVersion + 1;
       if (models.some(model => model.name === target.name)) await tx.query(`UPDATE control_loop_roster_models SET launcher=$3,provider=$4,
         family=$5,model_class=$6,roles=$7,efforts=$8,default_effort=$9,cost=$10,on_off=$11,note=$12,nick=$13,max_build_grade=$14,

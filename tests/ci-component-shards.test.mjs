@@ -21,6 +21,18 @@ const expected = originalChecks.flatMap(step => step === chain
   : [{ name: step.name, command: step.run, env: step.env ?? {} }]);
 const sort = values => [...values].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
+test("selection mutation guard has one affected-shard owner and runs the whole file", () => {
+  const job = workflow.jobs["affected-tests"];
+  assert.deepEqual(job.strategy.matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+  const guards = job.steps.filter(step => step.run?.includes("test:loop-selection-mutations"));
+  assert.equal(guards.length, 1);
+  assert.equal(guards[0].if, "${{ matrix.shard == 1 }}");
+  assert.equal(guards[0].run, "pnpm run test:loop-selection-mutations");
+  assert.equal(guards[0]["continue-on-error"], undefined);
+  assert.match(scripts["test:loop-selection-mutations"], / tests\/loop-selection-mutations\.test\.ts$/u);
+  assert.doesNotMatch(scripts["test:loop-selection-mutations"], /--test-(?:skip|name)-pattern/u);
+});
+
 function selectedChecks(job = components, packageScripts = scripts) {
   return shards.flatMap(shard => job.steps.filter(step =>
     step.if === `\${{ !cancelled() && matrix.shard == '${shard}' }}`
@@ -113,6 +125,12 @@ test("every shard preserves setup and continues its selected checks after a fail
   // by the immutable database-upgrade fixtures invoked by these lanes.
   const expectedSetup = structuredClone(setup);
   expectedSetup.find(step => step.uses?.startsWith("actions/checkout@")).with["fetch-depth"] = 0;
+  // U81-B CI lost the PGDG transfer (curl 56), then ran without PostgreSQL.
+  // Keep the historical capture and admit only this bounded retry improvement.
+  const pgdg = expectedSetup.find(step => step.name === "Install PostgreSQL 17 from PGDG");
+  pgdg.run = pgdg.run.replace(
+    "curl --silent --show-error --location --output /tmp/pgdg.asc",
+    "curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc");
   assert.deepEqual(components.steps.filter(step => !step.if), expectedSetup);
   assert.equal(components["runs-on"], baseline.job["runs-on"]);
   assert.deepEqual(components.env, baseline.job.env);

@@ -5,6 +5,8 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { parseStrictJsonV1 } from '../../installer/shared/strict-json.mjs';
 
+import type { LoopSelectionSourceFilesV1 } from './loop-selection-snapshot';
+
 const unavailable=()=>new Error('loop_monitoring_unavailable');
 const hash=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
 const sha=z.string().regex(/^[a-f0-9]{64}$/),generation=z.string().regex(/^[a-f0-9]{32}$/);
@@ -76,7 +78,7 @@ const ended=(pid:number)=>{try{process.kill(pid,0);return false;}catch(e){return
  * no-paid-work fixed CLI; this module never chooses models or retries workers. */
 export function createImproveControlRoomLoopMonitorV1(input:{availabilityFile:string;bootstrapHash:string;binding:string;
   enabled():boolean;collect(signal:AbortSignal,onChild:(pid:number)=>Promise<void>):Promise<{bytes:Uint8Array;exitCode:number|null}>;
-  clock?:LoopMonitoringClockV1}){
+  clock?:LoopMonitoringClockV1;selectionSources?:LoopSelectionSourceFilesV1}){
   const clock=input.clock??loopMonitoringClockV1,root=dirname(input.availabilityFile);
   const scheduleFile=input.availabilityFile+'.schedule.json',lockFile=input.availabilityFile+'.monitor.lock';
   const binding=sha.parse(input.binding);
@@ -104,6 +106,11 @@ export function createImproveControlRoomLoopMonitorV1(input:{availabilityFile:st
     try{await file.writeFile(JSON.stringify(value));await file.sync();await file.close();await rename(temp,path);
       const directory=await open(root,'r');try{await directory.sync();}finally{await directory.close();}
     }finally{await file.close();await rm(temp,{force:true});}
+  }
+  async function publish(operation:()=>Promise<void>){
+    const lease=input.selectionSources?.acquire();
+    try{if(lease)input.selectionSources!.invalidate(lease);await operation();}
+    finally{lease?.release();}
   }
   async function acquire(){
     safePath(root,root,true);
@@ -137,14 +144,14 @@ export function createImproveControlRoomLoopMonitorV1(input:{availabilityFile:st
       if(!s){
         let bootstrap:ReturnType<typeof decodeLoopHealthV1>|undefined;
         try{const bytes=readOwned(input.availabilityFile,root);if(hash(bytes)===input.bootstrapHash){const h=decodeLoopHealthV1(bytes,0);const age=at.wall-Date.parse(h.checked_at);if(age>=0&&age<=3600000)bootstrap=h;}}catch(e){if(!missing(e)&&!(e instanceof Error))throw e;}
-        if(bootstrap){s={schemaVersion:1,binding,generation:id,lastAttemptAt:null,nextAttemptAt:date(Date.parse(bootstrap.checked_at)+3000000),nextKind:'normal',snapshotHash:input.bootstrapHash,checkedAt:bootstrap.checked_at};await atomic(scheduleFile,s);}
+        if(bootstrap){s={schemaVersion:1,binding,generation:id,lastAttemptAt:null,nextAttemptAt:date(Date.parse(bootstrap.checked_at)+3000000),nextKind:'normal',snapshotHash:input.bootstrapHash,checkedAt:bootstrap.checked_at};await publish(()=>atomic(scheduleFile,s));}
       }
       if(s&&!uncertain&&!due(s,at.wall,at.mono))return;
       const kind=uncertain?'normal':s?.nextKind??'normal';
       const reservation:Schedule={schemaVersion:1,binding,generation:id,lastAttemptAt:date(at.wall),
         nextAttemptAt:date(at.wall+31000+(kind==='normal'?300000:3000000)),nextKind:kind==='normal'?'retry':'normal',
         snapshotHash:uncertain?null:s?.snapshotHash??null,checkedAt:uncertain?null:s?.checkedAt??null};
-      await atomic(scheduleFile,reservation);local={key:JSON.stringify(reservation),due:at.mono+Date.parse(reservation.nextAttemptAt)-at.wall};
+      await publish(()=>atomic(scheduleFile,reservation));local={key:JSON.stringify(reservation),due:at.mono+Date.parse(reservation.nextAttemptAt)-at.wall};
       if(!enabled())return;
       abort=new AbortController();record={...record,phase:'launching'};await writeLock();
       let health:ReturnType<typeof decodeLoopHealthV1>|undefined;
@@ -160,12 +167,14 @@ export function createImproveControlRoomLoopMonitorV1(input:{availabilityFile:st
       record={...record,phase:'ended'};await writeLock();
       if(!enabled()||abort.signal.aborted)return;
       const finish=now();let snapshotHash=reservation.snapshotHash,checkedAt=reservation.checkedAt;
-      if(health){snapshotHash=hash(Buffer.from(JSON.stringify(health)));await atomic(input.availabilityFile,health);checkedAt=health.checked_at;}
-      const success=!!health&&health.entries.every(e=>e.available);
-      const retry=kind==='normal'&&!success;
-      const completed:Schedule={...reservation,snapshotHash,checkedAt,nextKind:retry?'retry':'normal',
-        nextAttemptAt:date(retry?finish.wall+300000:kind==='normal'&&success?Date.parse(health!.checked_at)+3000000:finish.wall+3000000)};
-      await atomic(scheduleFile,completed);local={key:JSON.stringify(completed),due:finish.mono+Math.max(0,Date.parse(completed.nextAttemptAt)-finish.wall)};
+      await publish(async()=>{
+        if(health){snapshotHash=hash(Buffer.from(JSON.stringify(health)));await atomic(input.availabilityFile,health);checkedAt=health.checked_at;}
+        const success=!!health&&health.entries.every(e=>e.available);
+        const retry=kind==='normal'&&!success;
+        const completed:Schedule={...reservation,snapshotHash,checkedAt,nextKind:retry?'retry':'normal',
+          nextAttemptAt:date(retry?finish.wall+300000:kind==='normal'&&success?Date.parse(health!.checked_at)+3000000:finish.wall+3000000)};
+        await atomic(scheduleFile,completed);local={key:JSON.stringify(completed),due:finish.mono+Math.max(0,Date.parse(completed.nextAttemptAt)-finish.wall)};
+      });
     }finally{abort=undefined;await release();}
   }
   function assertAvailability(){
@@ -178,6 +187,7 @@ export function createImproveControlRoomLoopMonitorV1(input:{availabilityFile:st
   return Object.freeze({
     tick(){if(!enabled()){abort?.abort();return;}if(pending)return;pending=refresh().catch(()=>{}).finally(()=>{pending=undefined;});},
     assertAvailability,
+    readAvailability(){assertAvailability();return decodeLoopHealthV1(readOwned(input.availabilityFile,root),0);},
     close:()=>closePromise??=(async()=>{closing=true;abort?.abort();await pending;})(),
   });
 }

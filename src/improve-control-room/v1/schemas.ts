@@ -184,10 +184,25 @@ export const loopPaidPinSchemaV1 = z.object({
   servedModelId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/),
   providerVersion:loopVersion,priceRowDigest:digest,capNanoUsd:paidAdmission.shape.capNanoUsd,
 }).strict();
+/** Calendar validation shared by signed binding decoding; Date.parse alone normalizes impossible dates. */
+export function loopSelectionAcknowledgementTimestampV1(text: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.exec(text);
+  if (!m) return null;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  if (!year || month! < 1 || month! > 12 || day! < 1 || hour! > 23 || minute! > 59 || second! > 59) return null;
+  const calendar = new Date(0); calendar.setUTCFullYear(year!, month!, 0);
+  if (day! > calendar.getUTCDate()) return null;
+  if (m[7] !== "Z" && (Number(m[7]!.slice(1, 3)) > 15 || Number(m[7]!.slice(4)) > 59)) return null;
+  const parsed = Date.parse(text); return Number.isFinite(parsed) ? parsed : null;
+}
+export const loopSameFamilyAcknowledgementSchemaV1 = z.object({ schema_version: z.literal(1), rule: z.literal("R296"),
+  run: id, by: z.literal("owner"), accepted_at: z.string().refine(value => loopSelectionAcknowledgementTimestampV1(value) !== null),
+  acknowledgement: z.literal("same-family-risk-accepted") }).strict();
+const sameFamilyIntent = { acceptSameFamilyRisk: z.literal(true).optional() };
 export const loopBridgeBodiesV1 = {
-  intake: z.object({ description: loopDescription, settingsEdits: z.string().optional(), waiverId: id.optional() }).strict(),
-  confirm: z.object({ ...loopExpected, requestSha256: rawHash, settingsSha256: rawHash }).strict(),
-  start: z.object({ ...loopExpected, runLinkId: id, route:startRoute.optional(),paid:paidAdmission.optional() }).strict()
+  intake: z.object({ description: loopDescription, settingsEdits: z.string().optional(), waiverId: id.optional(), ...sameFamilyIntent }).strict(),
+  confirm: z.object({ ...loopExpected, requestSha256: rawHash, settingsSha256: rawHash, ...sameFamilyIntent }).strict(),
+  start: z.object({ ...loopExpected, runLinkId: id, route:startRoute.optional(),paid:paidAdmission.optional(), ...sameFamilyIntent }).strict()
     .refine(value => !value.paid || !!value.route),
   stop: z.object({ runLinkId: id }).strict(),
   approve: z.object({ ...loopExpected, step: z.enum(["plan", "spec"]),
@@ -207,7 +222,9 @@ export const loopBridgeBindingSchemaV1 = z.object({
   runLinkId: id.nullable(), authorizationId: id.nullable(),
   inputVersion: z.union([loopVersion, z.string().min(1).max(180)]).nullable(),
   expectedRevision: engineRevision.nullable(), evidence: digest.nullable(), paidPin:loopPaidPinSchemaV1.optional(),
-}).strict().refine(value => {
+  sameFamilyAcknowledgement: loopSameFamilyAcknowledgementSchemaV1.optional(),
+}).strict().refine(value => !value.sameFamilyAcknowledgement || value.sameFamilyAcknowledgement.run === value.loopRunId)
+.refine(value => !value.body.acceptSameFamilyRisk || !!value.sameFamilyAcknowledgement).refine(value => {
   if (!Object.hasOwn(value, "paidPin")) return !Object.hasOwn(value.body,"paid");
   const body=loopBridgeBodiesV1.start.safeParse(value.body);
   return body.success && !!body.data.paid && !!body.data.route

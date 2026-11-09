@@ -82,6 +82,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prove selection admission and custody guards
+        if: ${{ matrix.shard == 1 }}
+        timeout-minutes: 12
+        run: pnpm run test:loop-selection-mutations
       - name: Calculate affected-test requirements
         id: selection
         env:
@@ -104,7 +108,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -247,7 +251,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -300,7 +304,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -392,7 +396,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -487,6 +491,9 @@ jobs:
       - name: Test the generic VPS front-door installer
         run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
+        # REQUIRED external macOS qualification (exact product/tools pair):
+        # node scripts/check-loop-selection-host-gate.mjs
+        # Linux coverage checks the inventory and titles; it cannot qualify this gate.
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject stale or incomplete test quarantines
         run: node scripts/check-test-quarantine.mjs
@@ -635,7 +642,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -953,7 +960,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -1081,7 +1088,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -1223,7 +1230,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -1240,12 +1247,14 @@ jobs:
         if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/check-test-lane-coverage.mjs
           node scripts/ci/run-scripts-keep-going.mjs test
       - name: Component lanes (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           status=0
+          node scripts/check-test-lane-coverage.mjs
           node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:attack-kit || status=$?
           echo '::group::Resource-bound connector contracts'
           node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts || status=$?

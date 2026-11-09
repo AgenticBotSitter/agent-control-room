@@ -79,6 +79,9 @@ const DELIBERATE_REFUSALS = Object.freeze({
   // 0303 retains candidates bound to 0301's inputs and run links. Dropping
   // 0301 alone must refuse while those later foreign keys remain installed.
   "0301_control_loop_improvement_lineage.sql": "0303 adds foreign keys onto control_loop_improvement_inputs and control_loop_improvement_run_links",
+  // U81-B's 0316 adds retained admission provenance referencing 0310's
+  // policy input sources. Roll back 0317/0316 before dropping those sources.
+  "0310_control_loop_policy.sql": "0316 adds a foreign key onto control_loop_policy_input_sources from control_loop_policy_input_admissions; roll back 0317 and 0316 first",
   // Prices and fetches belong to 0313; dropping their provider FK via CASCADE
   // would silently damage that later migration. Its down must run first.
   "0312_control_loop_providers.sql": "0313 adds foreign keys onto control_loop_providers from provider prices and fetches; roll back 0313 first",
@@ -94,7 +97,7 @@ test("every db/down file is either runnable on a full install, or named here as 
     for (const named of Object.keys(DELIBERATE_REFUSALS)) {
       assert.ok(files.has(named), `${named} is named as a deliberate refusal but db/down/${named} does not exist`);
     }
-    assert.equal(Object.keys(DELIBERATE_REFUSALS).length, 13,
+    assert.equal(Object.keys(DELIBERATE_REFUSALS).length, 14,
       "the count of deliberate refusals changed. That is a design change: say why in this file, and add or remove the entry, rather than letting the list drift from what the sweep observes.");
 
     await withRealPostgres(async postgres => {

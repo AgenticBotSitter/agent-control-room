@@ -1,5 +1,5 @@
 {
   "schema": "control-room.release-schema-digest/v1",
-  "digest": "4a6a7d6b379607ba88adff4798e0aa0fb267ca03894a13b9cf7c65c0db2aaf78",
-  "note": "Through 0315 paid admission, including main candidate review identity. Web and updater queries agree in PGlite and native PostgreSQL 17."
+  "digest": "2d8114af1694cf47f6d49f4b9958198318a0a4ec0b666e746839c2fe94893ba9",
+  "note": "Through 0317 selection acknowledgement validation; measured web/updater equality on native PostgreSQL 17, with D33 admission provenance and application/native table counts 265/266."
 }

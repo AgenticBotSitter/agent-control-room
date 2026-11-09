@@ -698,6 +698,75 @@ test("the Linux affected job defers exact macOS updater files even on the ALL Po
   } finally { rmSync(root, { recursive: true }); }
 });
 
+import { b8ExternalHostInventoryV1,b8HostOnlyFileV1,b8MixedFileV1,b8P71SkipV1 } from '../scripts/check-test-lane-coverage.mjs';
+import { partitionB8ExternalHostV1 } from '../scripts/ci/affected-tests.mjs';
+
+test('B8 explicit external partition agrees in direct ALL PG metadata and argv paths',()=>{
+  const portable='tests/portable.test.ts',files=[b8HostOnlyFileV1,b8MixedFileV1,portable];
+  const root=fixture({[b8HostOnlyFileV1]:'requiresRealPostgres();',
+    [b8MixedFileV1]:'test("P71 real settings check",()=>{});\ntest("portable mixed case",()=>{});',
+    [portable]:'test("portable",()=>{});'});
+  const messages=[],calls=[],old=console.log;console.log=(...v)=>messages.push(v.join(' '));
+  try{
+    assert.deepEqual(partitionB8ExternalHostV1(files,files),{result:[b8MixedFileV1,portable],tests:[b8MixedFileV1,portable]});
+    for(const result of [files,'ALL']){
+      assert.equal(requiresPostgres(result,files,root),false);
+      const plan=affectedTestCommands(result,files,root);
+      assert.ok(plan.every(([,args])=>!args.includes(b8HostOnlyFileV1)));
+      const mixed=plan.find(([,args])=>args.includes(b8MixedFileV1));assert.ok(mixed);assert.equal(mixed[1].filter(a=>a===b8P71SkipV1).length,1);
+      assert.ok(mixed[1].indexOf(b8P71SkipV1)<mixed[1].indexOf(b8MixedFileV1));
+      assert.ok(!plan.find(([,args])=>args.includes(portable))[1].includes(b8P71SkipV1));
+      assert.equal(runAffectedTests(result,files,root,()=>0,()=>false,(_c,args)=>{calls.push(args);return {status:0,output:'# skipped 0\n'};}),0);
+    }
+    assert.ok(calls.every(args=>!args.includes(b8HostOnlyFileV1)));assert.equal(calls.length,4);
+    assert.equal(runAffectedTests([b8HostOnlyFileV1],[b8HostOnlyFileV1],root,()=>{assert.fail('no host preparations');},()=>{assert.fail('no host PG');}),0);
+    assert.deepEqual(affectedTestCommands('ALL',[b8HostOnlyFileV1],root),[]);
+    assert.equal(runSelectedTests('ALL',files,root,{execute:()=>0,postgresAvailable:()=>false,executeCapturingOutput:()=>{assert.fail('no portable full-suite duplication');},platform:'linux'}),0);
+    for(const entry of b8ExternalHostInventoryV1)assert.ok(messages.includes(`REQUIRED EXTERNAL HOST: ${entry}; gate=macOS; executed-in-linux=false`));
+    assert.ok(messages.some(l=>l.includes(b8P71SkipV1)));assert.ok(messages.some(l=>l.includes('exclusion=file')));
+  }finally{console.log=old;rmSync(root,{recursive:true,force:true});}
+});
+
+test('B8 mixed-file native exclusion still executes neighboring portable case and ordinary skips fail',()=>{
+  const root=fixture({[b8MixedFileV1]:`import test from 'node:test';\ntest('P71 real settings check',()=>{throw Error('host must not run');});\ntest('P71 real provider settings check',()=>{throw Error('provider host must not run');});\ntest('P72 real Start final policy admission',()=>{throw Error('Start host must not run');});\ntest('portable mixed case',()=>{});\n`});
+  try{
+    const plan=affectedTestCommands([b8MixedFileV1],[b8MixedFileV1],root);assert.equal(plan.length,1);
+    const [command,args]=plan[0],env={...process.env};delete env.NODE_TEST_CONTEXT;
+    const run=spawnSync(command,args.filter(a=>a!=='--import'&&a!=='tsx'),{cwd:root,env,encoding:'utf8',timeout:10000});
+    assert.equal(run.status,0,run.stdout+run.stderr);assert.match(run.stdout,/ok 1 - portable mixed case/);assert.doesNotMatch(run.stdout,/# Subtest: (?:P71 real (?:provider )?settings check|P72 real Start final policy admission)/);assert.match(run.stdout,/# tests 1/);
+    const result=runAffectedTests([b8MixedFileV1],[b8MixedFileV1],root,()=>0,()=>false,()=>({status:0,output:'# skipped 1\n'}));assert.equal(result,1);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test("snapshot port allocation is confined to its own PostgreSQL child", () => {
+  const snapshot = "tests/loop-selection-snapshot-postgres.test.ts";
+  const selection = "tests/loop-selection-postgres.test.ts";
+  const ordinary = "tests/normal.test.mjs";
+  const root = fixture({ [snapshot]: "const requiresRealPostgres = true;",
+    [selection]: "const requiresRealPostgres = true;", [ordinary]: "" });
+  const previous = process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+  try {
+    for (const assigned of [undefined, "60530"]) {
+      if (assigned === undefined) delete process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+      else process.env.CONTROL_ROOM_PG_TEST_PORT_BASE = assigned;
+      const observed = new Map();
+      assert.equal(runAffectedTests([ordinary, snapshot, selection], [ordinary, snapshot, selection], root,
+        () => 0, () => true, (_command, args, _cwd, environment) => {
+          observed.set(args.at(-1), environment.CONTROL_ROOM_PG_TEST_PORT_BASE);
+          return { status: 0, output: "# skipped 0\n" };
+        }), 0);
+      assert.equal(observed.get(snapshot), assigned ?? "59310", "snapshot gets an explicit range");
+      assert.equal(observed.get(selection), assigned, "U81 keeps its independent port allowlist/default");
+      assert.equal(observed.get(ordinary), assigned, "ordinary files inherit no new range");
+      assert.equal(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE, assigned, "child allocation cannot mutate the parent");
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+    else process.env.CONTROL_ROOM_PG_TEST_PORT_BASE = previous;
+    rmSync(root, { recursive: true });
+  }
+});
+
 test("shard input fails closed and an unset shard preserves local execution", () => {
   assert.equal(parseTestShard(undefined), undefined);
   assert.deepEqual(parseTestShard("2/8"), { index: 2, count: 8 });
@@ -722,6 +791,26 @@ test("every selected file belongs to exactly one shard, including empty and unev
     assert.equal(new Set(parts.flat()).size, length);
     assert.ok(Math.max(...parts.map(part => part.length)) - Math.min(...parts.map(part => part.length)) <= 1);
   }
+});
+
+test("the explicit mutation guard is excluded from shard execution but retained locally", () => {
+  const mutation = "tests/loop-selection-mutations.test.ts";
+  const names = [mutation, "tests/ordinary.test.mjs"];
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [];
+  const capture = (_command, args) => {
+    calls.push(args.at(-1));
+    return { status: 0, output: "# skipped 0\n" };
+  };
+  try {
+    for (let index = 1; index <= 8; index++)
+      assert.equal(runAffectedTests(names, names, root, () => 0, () => true, capture,
+        { index, count: 8 }), 0);
+    assert.deepEqual(calls, [names[1]]);
+    calls.length = 0;
+    assert.equal(runAffectedTests(names, names, root, () => 0, () => true, capture), 0);
+    assert.deepEqual(calls, names);
+  } finally { rmSync(root, { recursive: true }); }
 });
 
 test("sharding the final plan preserves commands and environments after bulk and macOS deferral", () => {
@@ -784,6 +873,31 @@ test("each shard retains real failure and unexempted-skip refusal while continui
   } finally { rmSync(root, { recursive: true }); }
 });
 
+test("B8 selection additions remain selectable across eight shards and migration fallback", () => {
+  const root = process.cwd();
+  const added = [
+    "tests/loop-selection-mutations.test.ts",
+    "tests/loop-selection-native.test.ts",
+    "tests/loop-selection-postgres.test.ts",
+    "tests/loop-selection-snapshot-mutations.test.ts",
+    "tests/loop-selection-snapshot-postgres.test.ts",
+    "tests/loop-selection-snapshot.test.ts",
+    "tests/loop-selection.test.ts",
+  ];
+  for (const file of added) assert.deepEqual(affectedTests(root, [file]), [file]);
+  for (const migration of [
+    "db/migrations/0316_control_loop_selection_acknowledgement.sql",
+    "db/migrations/0317_control_loop_selection_acknowledgement_validate.sql",
+    "db/down/0316_control_loop_selection_acknowledgement.sql",
+    "db/down/0317_control_loop_selection_acknowledgement_validate.sql",
+  ]) assert.equal(affectedTests(root, [migration]), "ALL");
+  const partition = partitionB8ExternalHostV1(added, added);
+  const combined = Array.from({ length: 8 }, (_, index) =>
+    selectTestShard(partition.tests, { index: index + 1, count: 8 })).flat();
+  assert.deepEqual(combined.sort(), added.filter(file => file !== b8HostOnlyFileV1
+    && file !== "tests/loop-selection-mutations.test.ts").sort());
+});
+
 test("the real repository's broad execution plan survives all eight shards unchanged", () => {
   const root = process.cwd(), tests = listTestFiles(root);
   const originalLog = console.log;
@@ -801,6 +915,9 @@ test("the real repository's broad execution plan survives all eight shards uncha
     const sorted = calls => [...calls].sort((a, b) => a.file.localeCompare(b.file));
     assert.ok(baseline.length > 100, "exercise the actual broad PostgreSQL workload");
     assert.deepEqual(sorted(combined), sorted(baseline));
+    for (const file of ["tests/loop-selection-postgres.test.ts", "tests/loop-selection-snapshot-postgres.test.ts"])
+      assert.equal(combined.filter(call => call.file === file).length, 1, `${file} must run once`);
+    assert.ok(!combined.some(call => call.file === b8HostOnlyFileV1));
     assert.equal(new Set(combined.map(call => call.file)).size, baseline.length);
   } finally { console.log = originalLog; }
 });

@@ -29,6 +29,17 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-sessio
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 
 type Pg = Parameters<Parameters<typeof withRealPostgres>[0]>[0];
+// Unwind acknowledgement constraints before testing a predecessor and restore them last.
+async function selectionDown(pg:Pg) {
+  for(const name of ['0317_control_loop_selection_acknowledgement_validate','0316_control_loop_selection_acknowledgement'])
+    await sql(pg,await readFile(`db/down/${name}.sql`,'utf8'),[],'migrator');
+}
+async function selectionUp(pg:Pg) {
+  for(const name of ['0316_control_loop_selection_acknowledgement','0317_control_loop_selection_acknowledgement_validate'])
+    await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile(`db/migrations/${name}.sql`,'utf8')}\nCOMMIT;`,[],'migrator');
+  await sql(pg,(await readFile('db/roles/private_web_roles.sql','utf8')).replace(/CREATE ROLE control_room_private_web[^;]+;/,''));
+}
+
 // Dedicated 60280..60289 range; no other component/attack-kit suite uses it.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 60280);
 const scope={tenantId:"tenant:b1b",workspaceId:"workspace:b1b"}, project="project:b1b",owner="identity:b1b", KEY=new Uint8Array(32).fill(67);
@@ -210,6 +221,7 @@ test("B1b SQL claim uniqueness guard",async()=>run(async pg=>{
 test("B1b empty down/re-up and failed migration roll back atomically",async()=>run(async pg=>{
   const baseline=await readPrivateWebSchemaDigest({query:async(q,p)=>sql(pg,q,p)});
   const down=await readFile("db/down/0302_control_loop_improvement_commands.sql","utf8"),up=await readFile("db/migrations/0302_control_loop_improvement_commands.sql","utf8");
+  await selectionDown(pg);
   await sql(pg,await readFile("db/down/0315_control_loop_paid_admission.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0314_control_loop_policy_enforcement.sql","utf8"),[],"migrator");
   await sql(pg,await readFile("db/down/0311_control_loop_policy_validate.sql","utf8"),[],"migrator");
@@ -223,9 +235,10 @@ test("B1b empty down/re-up and failed migration roll back atomically",async()=>r
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0311_control_loop_policy_validate.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0314_control_loop_policy_enforcement.sql","utf8")}\nCOMMIT;`,[],"migrator");
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${await readFile("db/migrations/0315_control_loop_paid_admission.sql","utf8")}\nCOMMIT;`,[],"migrator");
+  await selectionUp(pg);
   await sql(pg,"GRANT SELECT,INSERT ON control_loop_improvement_commands TO control_room_private_web");
   const roleSql=await readFile("db/roles/private_web_roles.sql","utf8");
-  await sql(pg,"BEGIN;"+roleSql.slice(roleSql.indexOf("-- P71:")));
+  await sql(pg,roleSql.replace(/CREATE ROLE control_room_private_web[^;]+;/,''));
   const after=await readPrivateWebSchemaDigest({query:async(q,p)=>sql(pg,q,p)});assert.equal(after,baseline);
 }));
 
@@ -361,7 +374,7 @@ test("P71 PostgreSQL production grants, immutable sources/audit, copies and reta
     assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest);
     const updater=digestReleaseSchemaRowsV1((await w.client.query(await readFile('src/updater/v1/pg/release-schema-digest.sql','utf8'))).rows);
     assert.equal(updater,privateWebSchemaDigest);
-    const tables=['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'];
+    const tables=['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources','control_loop_policy_input_admissions'];
     for(const table of tables){
       for(const privilege of ['SELECT','INSERT'])assert.equal((await w.client.query<{yes:boolean}>("SELECT has_table_privilege(current_user,$1,$2) yes",[table,privilege])).rows[0]!.yes,true);
       for(const privilege of ['UPDATE','DELETE','TRUNCATE'])assert.equal((await w.client.query<{yes:boolean}>("SELECT has_table_privilege(current_user,$1,$2) yes",[table,privilege])).rows[0]!.yes,false);
@@ -408,11 +421,19 @@ test("P71 PostgreSQL production grants, immutable sources/audit, copies and reta
     }finally{await restarted.close();}
     for(const table of tables){
       for(const action of [`DELETE FROM ${table}`,`TRUNCATE ${table}`])await assert.rejects(w.client.query(action),{sqlState:'42501'});
-      if(table!==tables[0])for(const action of [`UPDATE ${table} SET tenant_id=tenant_id`,`DELETE FROM ${table}`,`TRUNCATE ${table}`])
-        await assert.rejects(sql(pg,action),{code:'P0001'});
+      if(table!==tables[0])for(const action of [`UPDATE ${table} SET tenant_id=tenant_id`,`DELETE FROM ${table}`,`TRUNCATE ${table}`]) {
+        const paired=['control_loop_policy_input_sources','control_loop_policy_input_admissions'];
+        const companion=paired.find(name=>name!==table)!;
+        const trigger=companion==='control_loop_policy_input_sources'?'control_loop_policy_sources_no_truncate':'control_loop_policy_input_admissions_no_truncate';
+        const statement=action.startsWith('TRUNCATE')&&paired.includes(table)
+          ? `BEGIN; ALTER TABLE ${companion} DISABLE TRIGGER ${trigger}; TRUNCATE ${paired.join(',')}` : action;
+        await assert.rejects(sql(pg,statement),{code:'P0001'});
+      }
+
     }
     await assert.rejects(sql(pg,await readFile('db/down/0310_control_loop_policy.sql','utf8'),[],'migrator'),/loop policy retained/);
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_events')).rows[0].n,2);
+    assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest,'refused truncate restored all companion triggers');
     console.log(`P71 PG schema=${privateWebSchemaDigest} exact_ACL=true sources=3 events=2 retained_down=refused old_signed_copy=unchanged`);
   }finally{await w.close();}
 }));
@@ -523,6 +544,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
     const before=(await admin.query('SELECT * FROM control_loop_improvement_commands')).rows;
     for(const table of ['control_loop_policy_layers','control_loop_policy_events','control_loop_policy_input_sources'])
       assert.equal((await admin.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0);
+    await selectionDown(pg);
     await admin.query(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
     await admin.query(await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8'));
     await admin.query(await readFile('db/down/0311_control_loop_policy_validate.sql','utf8'));
@@ -535,6 +557,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
     await admin.query(await readFile('db/migrations/0311_control_loop_policy_validate.sql','utf8'));
     await admin.query(await readFile('db/migrations/0314_control_loop_policy_enforcement.sql','utf8'));
     await admin.query(await readFile('db/migrations/0315_control_loop_paid_admission.sql','utf8'));
+    await selectionUp(pg);
     assert.equal(await readPrivateWebSchemaDigest(admin),privateWebSchemaDigest,'re-validating P71 restores its release pin after refusal');
     console.log('P71 retained_commands=1 named_down_refusal=23514 rows_unchanged=true schema_unchanged=true P71_pin_restored=true');
   }finally{await admin.end();await w.close();}
@@ -547,6 +570,7 @@ test('P71 PostgreSQL empty downgrade restores the merged down-chain schema and r
   const validated=async()=>Boolean((await admin.query("SELECT convalidated FROM pg_constraint WHERE conrelid='control_loop_improvement_commands'::regclass AND conname='control_loop_improvement_commands_check1'")).rows[0].convalidated);
   try{
     assert.equal(await validated(),true,'fresh production migration validates the command predicate');
+    await selectionDown(pg);
     await admin.query(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));
     await admin.query(await readFile('db/down/0312_control_loop_providers.sql','utf8'));
     await admin.query(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
@@ -557,7 +581,7 @@ test('P71 PostgreSQL empty downgrade restores the merged down-chain schema and r
     assert.equal(await validated(),true,'0310 down restores the validated pre-P71 predicate');
     // The digest changed because the merged down-chain retains main's 0305/0307/0308 and B7's roster.
     assert.equal(await readPrivateWebSchemaDigest(admin),'2bdb25811bef31d5f9ee8e8a06b49ea2a2a31c476fed8214724d790b57b97386');
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/migrations/0316%' OR filename LIKE 'db/migrations/0317%' OR filename LIKE 'db/roles/%'");
     const before=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     for(const entry of await collectLedgerEntries(resolve('.'))){await mkdir(dirname(join(stage,entry.file)),{recursive:true});await writeFile(join(stage,entry.file),await readFile(entry.file));}
     await mkdir(join(stage,'db/setup'),{recursive:true});await writeFile(join(stage,'db/setup/production_migration_ledger.sql'),await readFile('db/setup/production_migration_ledger.sql'));
@@ -584,13 +608,14 @@ test('P71 PostgreSQL empty downgrade restores the merged down-chain schema and r
 }));
 
 test('P71 PostgreSQL previous-release signed rows survive production upgrade and legacy Start',async()=>run(async pg=>{
+  await selectionDown(pg);
   await sql(pg,await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0312_control_loop_providers.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0311_control_loop_policy_validate.sql','utf8'),[],'migrator');
   await sql(pg,await readFile('db/down/0310_control_loop_policy.sql','utf8'),[],'migrator');
-  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+  await sql(pg,"DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0310%' OR filename LIKE 'db/migrations/0311%' OR filename LIKE 'db/migrations/0312%' OR filename LIKE 'db/migrations/0313%' OR filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/migrations/0316%' OR filename LIKE 'db/migrations/0317%' OR filename LIKE 'db/roles/%'");
   await seed(pg,pg.database,false);const e=engine(),w=web(pg,e.adapter);
   try{
     const description='Retained pre-policy input.';
@@ -603,6 +628,11 @@ test('P71 PostgreSQL previous-release signed rows survive production upgrade and
     await w.desk.authorizeLoopStart(identity,project,{requestId,expectedVersion:1,runLinkId:link.runLink.runLinkId,
       requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},'p71-legacy-authorize-0001',
       {revision:status.revision,inputVersion:1,settingsDigest:status.settingsDigest,confirmation});
+    const historicalDescription='Retained pre-policy normalization.',normalized=historicalDescription+' Normalized.';
+    const historical=await w.desk.saveLoopDraft(identity,project,{description:historicalDescription,settingsText},'p71-legacy-normalize-draft-0001');
+    const historicalRun={...run,loopRunId:e.adapter.reserveRun()};
+    const historicalLink=await w.desk.recordLoopRunLink({projectId:project,requestId:historical.request.requestId,initialInputVersion:1,run:historicalRun});
+    e.runs.set(historicalRun.loopRunId,{...status,run:historicalRun,revision:1,inputVersion:2,state:'draft',description:normalized,confirmation:null,receipts:[]});
     const tables=['control_loop_improvement_requests','control_loop_improvement_inputs','control_loop_improvement_run_links','control_loop_improvement_authorizations'];
     const saved=async()=>Promise.all(tables.map(async table=>({table,rows:(await sql(pg,`SELECT row_to_json(r)::text bytes FROM ${table} r ORDER BY created_at,record_digest`)).rows})));
     const before=await saved();
@@ -610,16 +640,31 @@ test('P71 PostgreSQL previous-release signed rows survive production upgrade and
       env:{NODE_ENV:'test',CONTROL_ROOM_MIGRATOR_PASSWORD:pg.connection('migrator').password,CONTROL_ROOM_APP_PASSWORD:pg.connection('app').password,
         CONTROL_ROOM_SCHEDULER_PASSWORD:pg.connection('scheduler').password,CONTROL_ROOM_WORK_INTAKE_PASSWORD:pg.connection('control_room_work_intake_agent').password}});
     const roleSql=await readFile('db/roles/private_web_roles.sql','utf8');
-    await sql(pg,'BEGIN;'+roleSql.slice(roleSql.indexOf('-- P71:')));
+    await sql(pg,roleSql.replace(/CREATE ROLE control_room_private_web[^;]+;/,''));
+    assert.equal((await w.client.query<{allowed:boolean}>("SELECT has_function_privilege(current_user,'control_loop_selection_ack_timestamp_v1(text)','EXECUTE') allowed")).rows[0]!.allowed,true);
     await seedS4ProviderV1({query:async(query,params)=>sql(pg,query,params)},scope);
     assert.deepEqual(await saved(),before,'no backfill rewrites prior signed rows');
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,0,'missing source stays legacy, never an inferred waiver');
+    for(const operation of ['confirm','start'] as const) await assert.rejects(w.bridge.selectionTarget(identity,project,requestId,operation),{code:'service_unavailable'});
+    const historicalStatus=await w.bridge.status(identity,project,requestId);assert.equal(historicalStatus.selection,undefined);
+    assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_admissions')).rows[0].n,0,'all-versions-empty history gains no B8 authority');
     assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest);
     await w.policy.put(identity,project,'project',{lockedPaths:[],expectedVersion:0,settings:'{"fixture":"FUTURE_ONLY"}'},'p71-legacy-future-layer-0001');
     const started=await w.bridge.mutate(identity,project,requestId,'start',{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:2,runLinkId:link.runLink.runLinkId},'p71-legacy-start-0001');
     assert.equal(started.state,'accepted');assert.deepEqual(await saved(),before);
     assert.equal((await sql(pg,'SELECT count(*)::int n FROM control_loop_policy_input_sources')).rows[0].n,0);
-    console.log('P71 production_upgrade=true prior_signed_rows=unchanged legacy_sources=0 legacy_Start=accepted later_layers=future_only');
+    const normalizedResult=await w.bridge.mutate(identity,project,historical.request.requestId,'confirm',{
+      expectedVersion:1,expectedRevision:1,requestSha256:loopByteHashV1(normalized),settingsSha256:loopByteHashV1(settingsText)},'p71-legacy-normalize-confirm-0001');
+    assert.equal(normalizedResult.state,'accepted');assert.equal(normalizedResult.localVersion,2);
+    assert.deepEqual((await sql(pg,'SELECT row_to_json(r)::text bytes FROM control_loop_improvement_inputs r WHERE version=1 ORDER BY created_at,record_digest')).rows,before.find(row=>row.table==='control_loop_improvement_inputs')!.rows,'normalization appends without rewriting either historical signed input');
+    const historicalStarted=await w.bridge.mutate(identity,project,historical.request.requestId,'start',{
+      route:S4_FIXTURE_ROUTE,expectedVersion:2,expectedRevision:2,runLinkId:historicalLink.runLink.runLinkId},'p71-legacy-normalize-start-0001');
+    assert.equal(historicalStarted.state,'accepted');
+    for(const table of ['control_loop_policy_input_sources','control_loop_policy_input_admissions'])
+      assert.equal((await sql(pg,`SELECT count(*)::int n FROM ${table}`)).rows[0].n,0,'historical normalized copy manufactures no provenance');
+    for(const operation of ['confirm','start'] as const)
+      await assert.rejects(w.bridge.selectionTarget(identity,project,historical.request.requestId,operation),{code:'service_unavailable'});
+    console.log('P71 production_upgrade=true prior_signed_rows=unchanged legacy_sources=0 legacy_Confirm_normalized=accepted legacy_Start=accepted all_versions_empty_B8=refused later_layers=future_only');
   }finally{await w.close();}
 }));
 
@@ -832,6 +877,7 @@ test('P72 PostgreSQL empty down re-up and injected migration failure leave prior
     await admin.connect();
     const up='db/migrations/0314_control_loop_policy_enforcement.sql';
     const after=await readPrivateWebSchemaDigest(admin);
+    await selectionDown(pg);
     await admin.query(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
     await admin.query(await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8'));
     const before=await readPrivateWebSchemaDigest(admin);
@@ -840,7 +886,7 @@ test('P72 PostgreSQL empty down re-up and injected migration failure leave prior
     assert.deepEqual((await admin.query("SELECT attname FROM pg_attribute WHERE attrelid='control_loop_policy_layers'::regclass AND attnum>0 AND NOT attisdropped AND has_column_privilege('control_room_web',attrelid,attnum,'UPDATE') ORDER BY attname COLLATE \"C\"")).rows.map(row=>row.attname),
       ['last_idempotency_key','last_request_digest','settings_sha256','settings_text','updated_at','updated_by','version']);
     for(const privilege of ['SELECT','INSERT'])assert.equal((await admin.query('SELECT has_table_privilege($1,$2,$3) yes',['control_room_web','control_loop_policy_layers',privilege])).rows[0].yes,true);
-    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/roles/%'");
+    await admin.query("DELETE FROM control_room_schema_migrations WHERE filename LIKE 'db/migrations/0314%' OR filename LIKE 'db/migrations/0315%' OR filename LIKE 'db/migrations/0316%' OR filename LIKE 'db/migrations/0317%' OR filename LIKE 'db/roles/%'");
     const ledgerBefore=(await admin.query('SELECT * FROM control_room_schema_migrations ORDER BY ledger_order')).rows;
     const files=(await import('node:fs')).readdirSync('db',{recursive:true}).filter(file=>typeof file==='string' && file.endsWith('.sql')).map(file=>'db/'+file);
     for(const file of [...files,up]){await mkdir(dirname(join(stage,file)),{recursive:true});await writeFile(join(stage,file),await readFile(file));}
@@ -945,11 +991,13 @@ test('S4 native admission pins and migration preserve signed history and reject 
   const rows=()=>sql(pg,'SELECT * FROM control_loop_improvement_commands ORDER BY command_id,entry_kind');
   const history=(await rows()).rows;
   const down=await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'),up=await readFile('db/migrations/0315_control_loop_paid_admission.sql','utf8');
+  await selectionDown(pg);
   await sql(pg,down,[],'migrator');const previous=await readPrivateWebSchemaDigest(w.client);
   await assert.rejects(sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nSELECT 1/0;COMMIT;`,[],'migrator'),{code:'22012'});
   assert.equal(await readPrivateWebSchemaDigest(w.client),previous,'failed upgrade rolls back both CHECK replacements');
   assert.deepEqual((await rows()).rows,history,'failed upgrade retains signed bytes');
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nCOMMIT;`,[],'migrator');
+  await selectionUp(pg);
   const digest=await readPrivateWebSchemaDigest(w.client);
   assert.equal(digest,privateWebSchemaDigest);
   assert.equal(digest,digestReleaseSchemaRowsV1((await w.client.query(await readFile('src/updater/v1/pg/release-schema-digest.sql','utf8'))).rows));
@@ -998,6 +1046,7 @@ test('S4 native legacy route-less signed Start survives upgrade replay sweep and
  await seed(pg);const e=engine(),{w,id,s}=await confirmed(pg,e);
  try{
   const down=await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'),up=await readFile('db/migrations/0315_control_loop_paid_admission.sql','utf8');
+  await selectionDown(pg);
   await sql(pg,down,[],'migrator');
   const confirm=(await w.client.query<{binding:LoopBridgeBindingV1}>("SELECT binding FROM control_loop_improvement_commands WHERE operation='confirm' AND entry_kind='claim'")).rows[0]!.binding;
   const authorization=(await w.client.query<{id:string}>('SELECT id FROM control_loop_improvement_authorizations')).rows[0]!.id;
@@ -1022,6 +1071,7 @@ test('S4 native legacy route-less signed Start survives upgrade replay sweep and
   await assert.rejects(sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nSELECT 1/0;COMMIT;`,[],'migrator'),{code:'22012'});
   assert.deepEqual((await rows()).rows,before);
   await sql(pg,`BEGIN;SET LOCAL ROLE control_room_schema_owner;${up}\nCOMMIT;`,[],'migrator');
+  await selectionUp(pg);
   assert.deepEqual((await rows()).rows,before,'upgrade preserves every legacy signed byte');
   assert.equal(await readPrivateWebSchemaDigest(w.client),privateWebSchemaDigest);
   const released:string[]=[],adapter={...e.adapter,providerRoutes:undefined,releaseCommandFiles:async(id:string)=>{released.push(id);}};

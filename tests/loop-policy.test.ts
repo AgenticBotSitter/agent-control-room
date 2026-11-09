@@ -1,5 +1,5 @@
 import { reachableTests, workflowCommands } from "../scripts/check-test-lane-coverage.mjs";
-// Required macOS host gates, pinned tools revision 03c3595 (no skips or fixture replacement):
+// Required macOS host gates, pinned tools revision 064eb46 (no skips or fixture replacement):
 // export CONTROL_ROOM_A2_TEST_LOOP="<pinned lead-tools checkout>/loop"
 // pnpm test:loop-policy:real
 // pnpm test:loop-policy:real:provider
@@ -21,6 +21,8 @@ import { WebAccessError } from "../src/web/v1/access-verifier";
 import { taskFixture } from "./helpers/web-task";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+
+const p71Subcases = ['qualified fixture defaults', 'deterministic merged encoding', 'unknown model refusal'];
 
 // Direct CLI mode runs the actual tests without quarantine and verifies their TAP.
 // Exit before node:test starts this parent file's registered test suite.
@@ -177,7 +179,7 @@ test("P71 Linux CI excludes exactly three macOS host gates without skip-as-pass"
   const hostTests = host.match(/tests\/[^\s]+\.tsx?/g);
   assert.ok(hostTests && hostTests.length > 0, 'host lane must name at least one test file');
   for (const file of hostTests) assert.ok(reached.has(file), `CI reaches ${file}`);
-  assert.equal(scripts['test:loop-policy:real'], 'node --import tsx tests/loop-policy.test.ts --host-gate settings');
+  assert.equal(scripts['test:loop-policy:real'], 'node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-reporter=tap --test-name-pattern=\'^P71 real settings check$\' tests/loop-policy.test.ts');
   assert.doesNotMatch(scripts['test:loop-policy:real'], /skip|\|\|/);
   await mkdir(resolve('.test-tmp'), { recursive: true });
   const root = await mkdtemp(resolve('.test-tmp/p71-ci-filter-')); t.after(() => rm(root, { recursive: true, force: true }));
@@ -198,22 +200,51 @@ test("P71 Linux CI excludes exactly three macOS host gates without skip-as-pass"
 // Keep the process verdict separate from TAP validation so a zero-match Node run
 // cannot use its passing file envelope as evidence that a host case executed.
 function hostGateStatus(status: number | null, tap: string, expected: readonly string[]): number {
-  if (status !== 0 || /^(?:not ok|Bail out!)/m.test(tap) || /^(?:not )?ok .+ # (?:SKIP|TODO)\b/im.test(tap)) return 1;
-  const cases = [...tap.matchAll(/^ok \d+ - ([^\r\n]+)$/gm)].map(match => match[1]!);
-  if (JSON.stringify(cases.sort()) !== JSON.stringify([...expected].sort())) return 1;
-  for (const [field, count] of Object.entries({ tests: expected.length, pass: expected.length,
-    fail: 0, cancelled: 0, skipped: 0, todo: 0 })) {
-    const values = [...tap.matchAll(new RegExp(`^# ${field} (\\d+)$`, 'gm'))];
-    if (values.length !== 1 || Number(values[0]![1]) !== count) return 1;
+  if (status !== 0 || /\b(?:SKIP|TODO|quarantin\w*)\b|^\s*(?:not ok|Bail out!)/im.test(tap.replace(/^# (?:skipped|todo) 0$/gm, ''))) return 1;
+  type Scope = {title: string | null; children: {title: string; children: Scope['children']}[]; plan: number | null; pending?: string};
+  const scopes = new Map<number, Scope>([[0, {title: null, children: [], plan: null}]]);
+  let yaml = false, version = 0, completed = 0;
+  for (const line of tap.split(/\r?\n/)) {
+    if (/^\s*---\s*$/.test(line)) { if (yaml) return 1; yaml = true; continue; }
+    if (yaml) { if (/^\s*\.\.\.\s*$/.test(line)) yaml = false; continue; }
+    if (line === 'TAP version 13') { version++; continue; }
+    const sub = /^( *)# Subtest: (.+)$/.exec(line);
+    if (sub) {
+      const depth = sub[1]!.length, scope = scopes.get(depth);
+      if (!scope || scope.pending || scopes.has(depth + 4)) return 1;
+      scope.pending = sub[2]!; scopes.set(depth + 4, {title: sub[2]!, children: [], plan: null}); continue;
+    }
+    const ok = /^( *)ok (\d+) - (.+)$/.exec(line);
+    if (ok) {
+      const depth = ok[1]!.length, scope = scopes.get(depth), child = scopes.get(depth + 4);
+      if (!scope || scope.pending !== ok[3] || child?.title !== ok[3] || Number(ok[2]) !== scope.children.length + 1
+        || (child.plan !== null ? child.plan !== child.children.length : child.children.length !== 0)) return 1;
+      scope.children.push({title: child.title!, children: child.children}); completed++; scope.pending = undefined; scopes.delete(depth + 4); continue;
+    }
+    const plan = /^( *)1\.\.(\d+)$/.exec(line);
+    if (plan) { const scope = scopes.get(plan[1]!.length); if (!scope || scope.plan !== null || Number(plan[2]) < 1) return 1; scope.plan = Number(plan[2]); continue; }
+    if (line.trim() && !/^\s*#/.test(line)) return 1;
   }
-  const plans = [...tap.matchAll(/^1\.\.(\d+)$/gm)];
-  return plans.length === 1 && Number(plans[0]![1]) === expected.length ? 0 : 1;
+  const root = scopes.get(0)!;
+  if (version !== 1 || yaml || scopes.size !== 1 || root.pending || root.plan !== expected.length
+    || JSON.stringify(root.children.map(c => c.title).sort()) !== JSON.stringify([...expected].sort())) return 1;
+  for (const child of root.children) {
+    const names = child.title === 'P71 real settings check' ? p71Subcases : [];
+    if (JSON.stringify(child.children.map(c => c.title)) !== JSON.stringify(names) || child.children.some(c => c.children.length)) return 1;
+  }
+  const count = expected.length + (expected.includes('P71 real settings check') ? p71Subcases.length : 0);
+  if (completed !== count) return 1;
+  for (const [field, value] of Object.entries({tests: count, pass: count, fail: 0, cancelled: 0, skipped: 0, todo: 0})) {
+    const values = [...tap.matchAll(new RegExp(`^# ${field} (\\d+)$`, 'gm'))];
+    if (values.length !== 1 || Number(values[0]![1]) !== value) return 1;
+  }
+  return 0;
 }
 
 test("P71 macOS host gate aliases and registrations stay paired", async () => {
   const { scripts } = JSON.parse(await readFile('package.json', 'utf8'));
-  for (const [alias, mode] of [['test:loop-policy:real', 'settings'],
-    ['test:loop-policy:real:provider', 'provider'], ['test:loop-policy:real:all', 'all']]) {
+  for (const [alias, mode] of [['test:loop-policy:real:provider', 'provider'], ['test:loop-policy:real:all', 'all'],
+    ['test:loop-policy:real:enforcement', 'enforcement']]) {
     assert.equal(scripts[alias!], `node --import tsx tests/loop-policy.test.ts --host-gate ${mode}`);
   }
   const source = await readFile('tests/loop-policy.test.ts', 'utf8');
@@ -239,11 +270,14 @@ test("P71 macOS host gate requires exact passing TAP cases", async t => {
       return { status: result.code, tap: result.stdout };
     }
   };
-  const complete = await run(names.map(name => `test(${JSON.stringify(name)}, () => {});`).join('\n'));
+  const complete = await run(names.map(name => name === 'P71 real settings check'
+    ? `test(${JSON.stringify(name)}, async t => { for (const title of ${JSON.stringify(p71Subcases)}) await t.test(title, () => {}); });`
+    : `test(${JSON.stringify(name)}, () => {});`).join('\n'));
   assert.equal(hostGateStatus(complete.status, complete.tap, names), 0, 'both exact named passes accepted');
   for (const [label, source, pattern] of [
     ['empty Node file envelope', '', undefined],
     ['zero filter matches', `test('unrelated case', () => {});`, undefined],
+    ['empty settings parent', names.map(name => `test(${JSON.stringify(name)}, () => {});`).join('\n'), undefined],
     ['missing provider', `test(${JSON.stringify(names[0])}, () => {});`, undefined],
     ['renamed provider', `test(${JSON.stringify(names[0])}, () => {}); test('renamed provider', () => {});`, '.+'],
     ['skip', `test(${JSON.stringify(names[0])}, () => {}); test.skip(${JSON.stringify(names[1])}, () => {});`, undefined],
@@ -298,6 +332,8 @@ test("P71 downgrade refuses retained run-edit commands before changing the schem
 
 test("P71 empty downgrade restores the merged down-chain schema", async t => {
   const f = await policyFixture(t);
+  await f.db.exec(await readFile('db/down/0317_control_loop_selection_acknowledgement_validate.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0316_control_loop_selection_acknowledgement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0313_control_loop_provider_prices.sql','utf8'));
   await f.db.exec(await readFile('db/down/0312_control_loop_providers.sql','utf8'));
   await f.db.exec(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
@@ -450,10 +486,9 @@ finally:
 test("P71 real settings check", async t => {
   const {adapter,settingsText,root}=await realSettingsFixture(t);
   const fixture={settings:settingsText};
-  const initialCheck=await adapter.checkSettings!(fixture.settings);
-  assert.equal(initialCheck.eligible,true,`real cr accepts its qualified fixture defaults: ${JSON.stringify(initialCheck.reasons)}`);
+  await t.test('qualified fixture defaults',async()=>{assert.equal((await adapter.checkSettings!(fixture.settings)).eligible,true,'real cr accepts its qualified fixture defaults');});
   const composed=composeLoopSettingsV1({defaultsText:fixture.settings,project:'{}',selection:'{}',runEdits:'{}'});
-  assert.equal((await adapter.checkSettings!(composed.text)).eligible,true,'real cr accepts deterministic merged encoding');
+  await t.test('deterministic merged encoding',async()=>{assert.equal((await adapter.checkSettings!(composed.text)).eligible,true,'real cr accepts deterministic merged encoding');});
   await mkdir(join(root,'skills'),{recursive:true});
   await writeFile(join(root,'skills','recorded.md'),'Recorded skill fixture.');
   const paths=JSON.parse(settingsText);
@@ -474,14 +509,16 @@ test("P71 real settings check", async t => {
   };
   replaceModel(unknown);
   assert.ok(changed,'qualified settings must identify a model for the unknown-model refusal probe');
+  await t.test('unknown model refusal',async()=>{
   const refusal=await adapter.checkSettings!(JSON.stringify(unknown));
   assert.equal(refusal.eligible,false);assert.ok(refusal.reasons.length>0,'real exit-3 refusal preserves the tools reason');
   console.log(`P71 real direct cr checks=5 valid=true unknown_model=false reason=${refusal.reasons[0]!.code}`);
+  });
   // Real intake/Start path independence, check-side final-family refusal, merge-rule parity and recovery require separate release evidence;
   // a passing direct checker alone does not confer POLICY-STORE-GREEN.
 });
 
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFile, spawnSync } from "node:child_process";
@@ -504,7 +541,7 @@ with open(os.path.join(root,'trace.jsonl'),'a') as f:
 mode=candidate.get('mode','ok')
 if mode.startswith('envelope'):
  result=dict(schema_version=1,eligible=True,slots={},candidates={},reasons=[],reserved_final=None,fallback=False,roster_digest=None,availability_digest=None)
- # Recorded shapes from pinned tools revision 03c3595 lineup.py:52,287-315 and cr.py:736-772.
+ # Recorded shapes from pinned tools revision 064eb46 lineup.py:52,287-315 and cr.py:736-772.
  # Top-level reasons add slot/model; slot and candidate reasons retain the base reason.
  if mode in ('envelope-waived','envelope-accepted','envelope-mixed','envelope-blocked','envelope-eligible-unwaived','envelope-ineligible-waived','envelope-exit-zero','envelope-exit-three'):
   reason=dict(code='FINAL_REVIEW_FALLBACK',explanation='No eligible unused final family remains; a reviewer-only family may provide final.',waived=True)
@@ -599,6 +636,116 @@ test('P71 commit reauthorizes revoked owner and compares exact defaults hash des
   assert.equal(await f.count(),0);assert.equal((await f.db.query('SELECT * FROM control_loop_policy_layers')).rows.length,0);
 });
 
+import { canonicalJson } from '../src/security';
+import { encodeSelectionSourceBundleV1,selectionSnapshotFromBundleV1 } from '../src/web/v1/loop-selection-snapshot-wire';
+
+/** Synthetic executable only: validates product transport, never qualifies Python policy. */
+async function selectedTransportFixture(t:TestContext, startRoutes?: import('../src/web/v1/improve-control-room-loop-adapter').LoopProviderRouteResolutionV1, options: { onEncode?(): void; timeoutMs?: number } = {}){
+  const f=await checkerFixture(t);await f.adapter.close();
+  await mkdir(join(f.root,'roster'),{mode:0o700});
+  const roster='synthetic transport roster\n',health={schema_version:1 as const,checked_at:new Date().toISOString(),entries:[{model:'fixture',route:'fixture',available:true}]};
+  await writeFile(join(f.root,'roster/roster-export.tsv'),roster,{mode:0o600});
+  await writeFile(f.configuration.availabilityFile,JSON.stringify(health),{mode:0o600});
+  await chmod(f.configuration.availabilityFile,0o600);
+  const script=String.raw`import sys,json,hashlib,time,os,signal
+from pathlib import Path
+root=Path(__file__).resolve().parents[3]
+a=sys.argv[1:]
+s=Path(a[a.index('--settings')+1]).read_bytes()
+b=json.loads(Path(a[a.index('--selection-snapshot')+1]).read_text())
+c=json.loads(Path(a[a.index('--selection-context')+1]).read_text())
+h=json.loads(Path(a[a.index('--availability')+1]).read_text())
+with (root/'trace.jsonl').open('a') as f:f.write(json.dumps(dict(args=a,context=c,health=h,settingsText=s.decode(),pid=os.getpid()))+'\n')
+if json.loads(s).get('ignoreTerm'):signal.signal(signal.SIGTERM,signal.SIG_IGN)
+if json.loads(s).get('hold'):time.sleep(10)
+C=lambda v:json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
+H=lambda v:hashlib.sha256(v).hexdigest()
+snap=dict(rosterDigest=H(b['roster']['text'].encode()),availabilityDigest=H(C(h)),revision=b['revision'])
+eff=dict(model='fixture',route='fixture',effort='medium',family='fixture',**{'class':'frontier','cost':'free'})
+p=dict(family_policy='review-only',lineup=[dict(role=role,index=0,requested=eff,effective=eff,refusals=[],fallback=False) for role in ['plan','spec','build','code_reviews','final']],reservedFinal=eff,waivedReasons=[],rosterDigest=snap['rosterDigest'],availabilityDigest=snap['availabilityDigest'])
+p['lineupDigest']=H(C(dict(settingsSha256=H(s),snapshot=snap,projection=p)))
+print(json.dumps(dict(eligible=True,reasons=[],projection=p,snapshot=snap)))
+`;
+  await writeFile(f.configuration.entrypoint,script);
+  for(const name of ['lineup.py','run_settings.py','selection_contract.py','bridge/a2-contract.mjs','bridge/selection-schema.json'])
+    await writeFile(join(f.root,'tools/loop',name),'SYNTHETIC transport pin '+name+'\n');
+  const files=['cr.py','lineup.py','run_settings.py','selection_contract.py','bridge/a2-contract.mjs','bridge/selection-schema.json','bridge/cr-entry.py'];
+  let manifest='';for(const file of files)manifest+=loopByteHashV1(await readFile(join(f.root,'tools/loop',file)))+'  tools/loop/'+file+'\n';
+  await writeFile(f.configuration.toolingManifest,manifest);
+  const toolingRevision='sha256:'+sha(manifest),schemaDigest='sha256:'+loopByteHashV1(await readFile(join(f.root,'tools/loop/bridge/selection-schema.json')));
+  const capability={schemaVersion:1 as const,revision:'b8-selection-review-only/1' as const,schemaDigest,
+    encodeContext(value:unknown){options.onEncode?.();return canonicalJson(value);},decodeResult(value:any,pins:{settingsSha256:string}){
+      const {lineupDigest,...rest}=value.projection;
+      assert.equal(lineupDigest,sha(canonicalJson({settingsSha256:pins.settingsSha256,snapshot:value.snapshot,projection:rest})));return value;
+    }};
+  const adapter=createImproveControlRoomLoopAdapterV1({...f.configuration,toolingRevision,timeoutMs:options.timeoutMs ?? 1000,
+    entrypointSha256:sha(script),availabilitySha256:sha(JSON.stringify(health)),
+    contract:{...f.configuration.contract,lineage:{...f.configuration.contract.lineage,toolingRevision},selectionProjection:capability,
+      qualifiedOperations:startRoutes ? ['intake','start'] : ['intake'],admissionExpectation:()=>({}),
+      ...(startRoutes ? {providerRoutes:{schemaVersion:1 as const,resolveStartRoute:async()=>startRoutes}} : {})}});t.after(()=>adapter.close());
+  const sources=adapter.selectionSources!;sources.initialize();
+  const bundle={schemaVersion:1 as const,revision:'selection-source-v1:'+'a'.repeat(32),roster:{version:'1',exportedVersion:'1',text:roster},availability:health};
+  const lease=sources.acquire();try{sources.publish(lease,bundle);}finally{lease.release();}
+  return {...f,adapter,sources,bundle,capability,toolingRevision};
+}
+
+test('T-SNAPSHOT selected transport copies exact settings context bundle health and captures immutable codec',async t=>{
+  const f=await selectedTransportFixture(t),context={mode:'preview' as const,sameFamilyIntent:false};
+  f.capability.encodeContext=()=>{throw Error('mutated supplier method must not run');};
+  const text=' {"project":{"host_adapter":"local-loop"},"kept":"é"}\n';
+  const value=await f.adapter.checkSettings!(text,context);assert.equal(value.eligible,true);
+  assert.deepEqual(value.snapshot,selectionSnapshotFromBundleV1(f.bundle));
+  const [trace]=await f.traces();assert.equal(trace.settingsText,text);assert.deepEqual(trace.context,context);assert.deepEqual(trace.health,f.bundle.availability);
+  assert.deepEqual(trace.args.slice(0,2),['check','lineup']);assert.ok(trace.args.includes('--selection-context'));assert.ok(trace.args.includes('--selection-snapshot'));
+  assert.deepEqual(await readdir(join(f.root,'work')),[]);
+});
+
+test('T-SNAPSHOT selected transport refuses changed manifest bytes, schema pin and source revision',async t=>{
+  const f=await selectedTransportFixture(t),ctx={mode:'preview' as const,sameFamilyIntent:false};
+  const file=join(f.root,'tools/loop/selection_contract.py'),old=await readFile(file);
+  await writeFile(file,'changed');await assert.rejects(Promise.resolve().then(()=>f.adapter.checkSettings!('{}',ctx)));await writeFile(file,old);
+  const lease=f.sources.acquire();try{f.sources.invalidate(lease);}finally{lease.release();}
+  await assert.rejects(f.adapter.checkSettings!('{}',ctx));
+  assert.equal(await readFile(join(f.root,'trace.jsonl'),'utf8').catch(()=>''),'','refused before checker spawn');
+});
+
+test('T-SNAPSHOT selected cancellation reaps child and removes owned temporary directory',async t=>{
+  const f=await selectedTransportFixture(t),controller=new AbortController();
+  const pending=f.adapter.checkSettings!('{"hold":true}',{mode:'preview',sameFamilyIntent:false},{signal:controller.signal,timeoutMs:500});
+  const timer=setTimeout(()=>controller.abort(),200);try{await assert.rejects(pending);}finally{clearTimeout(timer);}
+  assert.equal((await f.traces()).length,1,'cancellation must reap a child that actually entered the checker');
+  assert.deepEqual(await readdir(join(f.root,'work')),[]);
+});
+
+test('T-SNAPSHOT dispatch capsule binds complete command before spawn callback',async t=>{
+  const f=await selectedTransportFixture(t),commandId='loop-command:'+'a'.repeat(32),text='{"project":{"host_adapter":"local-loop"}}';let spawnCallbacks=0;
+  const binding={schemaVersion:1,body:{description:'fixture'},localVersion:1,adapterId:f.adapter.adapterId,loopRunId:'fixture-run',toolingRevision:f.toolingRevision,
+    a2SchemaVersion:1,schemaDigest:f.adapter.schemaDigest,requestSha256:sha('fixture'),settingsSha256:sha(text),runLinkId:null,authorizationId:null,
+    inputVersion:null,expectedRevision:null,evidence:null} as import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1;
+  await assert.rejects(f.adapter.intake(commandId,binding,'fixture',()=>{spawnCallbacks++;},text,
+    {commandId,bindingDigest:'sha256:'+'0'.repeat(64),snapshot:selectionSnapshotFromBundleV1(f.bundle),lineupDigest:'b'.repeat(64)}));
+  assert.equal(spawnCallbacks,0,'capsule mismatch cannot reach the spawn boundary');
+});
+
+test('T-SNAPSHOT Start requires provider admission and a matching capsule together before spawn',async t=>{
+  const routes={providerId:'fixture-provider',model:'fixture',additionalRoutes:[]};
+  const f=await selectedTransportFixture(t,routes),commandId='loop-command:'+'a'.repeat(32);
+  const text=JSON.stringify({providerRoute:{providerId:routes.providerId,model:routes.model}}),snapshot=selectionSnapshotFromBundleV1(f.bundle);
+  const binding={schemaVersion:1,body:{route:{providerId:routes.providerId,model:routes.model}},localVersion:1,adapterId:f.adapter.adapterId,
+    loopRunId:'fixture-run',toolingRevision:f.toolingRevision,a2SchemaVersion:1,schemaDigest:f.adapter.schemaDigest,requestSha256:sha('fixture'),
+    settingsSha256:sha(text),runLinkId:null,authorizationId:null,inputVersion:null,expectedRevision:null,evidence:null} as import('../src/improve-control-room/v1/schemas').LoopBridgeBindingV1;
+  const dispatch={commandId,bindingDigest:(await import('../src/security')).sha256Digest(binding),snapshot,lineupDigest:'b'.repeat(64)};
+  const admission={settingsSha256:sha(text),routes};let spawns=0;
+  const boundary=()=>{spawns++;throw Error('synthetic spawn boundary');};
+  await assert.rejects(f.adapter.start(commandId,binding,boundary,text,undefined,dispatch));
+  await assert.rejects(f.adapter.start(commandId,binding,boundary,text,{...admission,routes:{...routes,model:'changed'}},dispatch));
+  await assert.rejects(f.adapter.start(commandId,binding,boundary,text,admission,{...dispatch,bindingDigest:'sha256:'+'0'.repeat(64)}));
+  const paid={...binding,body:{...binding.body,paid:{optIn:true,capNanoUsd:'100'}}};
+  await assert.rejects(f.adapter.start(commandId,paid,boundary,text,admission,{...dispatch,bindingDigest:(await import('../src/security')).sha256Digest(paid)}));
+  assert.equal(spawns,0,'neither capsule nor route admission can bypass the other guard or paid readiness');
+  await assert.rejects(f.adapter.start(commandId,binding,boundary,text,admission,dispatch),/synthetic spawn boundary/);
+  assert.equal(spawns,1,'both valid authorities reach the existing boundary once');
+});
 
 test('P71 direct checker projects the pinned lineup envelope and refuses unexpected shapes', async t => {
  const f=await checkerFixture(t);
@@ -768,4 +915,77 @@ for blocked in (False,True):
     env:{PATH:'/usr/bin:/bin',TMPDIR:f.root,CONTROL_ROOM_TEST_BLOCK_AGENT_CLI:'1',PYTHONDONTWRITEBYTECODE:'1',NODE_ENV:'test'}});
   assert.match(stdout,/actual Start final-builder-family refusal=LINEUP_INELIGIBLE/);
   assert.match(stdout,/signed_bytes_equal=true/);console.log(stdout.trim());
+});
+
+function admissionContext(f: Awaited<ReturnType<typeof selectedTransportFixture>>, text: string) {
+  return { mode: 'admission' as const, commandId: 'loop-command:'+'c'.repeat(32), binding: {
+    schemaVersion: 1 as const, body: { description: 'fixture' }, localVersion: 1, adapterId: f.adapter.adapterId,
+    loopRunId: 'fixture-run', toolingRevision: f.toolingRevision, a2SchemaVersion: 1 as const, schemaDigest: f.adapter.schemaDigest,
+    requestSha256: sha('fixture'), settingsSha256: sha(text), runLinkId: null, authorizationId: null,
+    inputVersion: null, expectedRevision: null, evidence: null,
+  } };
+}
+
+for (const [window, preparation, expected] of [[5000,200,3800],[1500,100,400],[1100,50,50]]) {
+  test(`U81-B1a admission child single reserve W=${window} preparation=${preparation}`, async t => {
+    let mono=0;
+    const f=await selectedTransportFixture(t,undefined,{timeoutMs:5000,onEncode(){mono=preparation;}});
+    t.mock.method(performance,'now',()=>mono);
+    // Arithmetic uses controlled time; Python startup is not required to fit 50 host milliseconds.
+    t.mock.timers.enable({apis:['setTimeout']});
+    const timers: number[]=[]; const original=setTimeout;
+    t.mock.method(globalThis,'setTimeout',((fn: (...args:any[])=>void,ms?:number,...args:any[])=>{
+      timers.push(ms!); return original(fn,ms,...args);
+    }) as typeof setTimeout);
+    const result=await f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:new AbortController().signal,timeoutMs:window});
+    assert.equal(result.eligible,true);
+    assert.equal(timers[0],expected,'child receives remaining-to-deadline minus exactly one reserve');
+    assert.equal((await f.traces()).length,1);assert.deepEqual(await readdir(join(f.root,'work')),[]);
+  });
+}
+
+for (const [window, preparation] of [[1000,0],[5000,4000],[1500,500]]) {
+  test(`U81-B1a exhausted preparation starts no child W=${window} preparation=${preparation}`,async t=>{
+    let mono=0;
+    const f=await selectedTransportFixture(t,undefined,{onEncode(){mono=preparation;}});
+    t.mock.method(performance,'now',()=>mono);
+    let childTimers=0;const original=setTimeout;
+    t.mock.method(globalThis,'setTimeout',((fn: (...args:any[])=>void,ms?:number,...args:any[])=>{
+      childTimers++;return original(fn,ms,...args);
+    }) as typeof setTimeout);
+    await assert.rejects(f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:new AbortController().signal,timeoutMs:window}),/unavailable/);
+    assert.equal(childTimers,0,'cutoff refuses before child spawn');
+    assert.equal(await readFile(join(f.root,'trace.jsonl'),'utf8').catch(()=>''),'','cutoff refuses before child spawn');
+    assert.deepEqual(await readdir(join(f.root,'work')),[]);
+  });
+}
+
+test('U81-B1a per-call integer validation and abort refuse before preparation',async t=>{
+  let encoded=0;const f=await selectedTransportFixture(t,undefined,{onEncode(){encoded++;}});
+  for(const timeoutMs of [0,-1,0.5,NaN,Infinity])
+    await assert.rejects(f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:new AbortController().signal,timeoutMs}));
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(f.adapter.checkSettings!('{}',admissionContext(f,'{}'),{signal:controller.signal,timeoutMs:5000}));
+  assert.equal(encoded,0,'invalid execution never serializes context or reads snapshot');
+  assert.deepEqual(await readdir(join(f.root,'work')),[]);
+  assert.throws(()=>createImproveControlRoomLoopAdapterV1({...f.configuration,timeoutMs:99}),/unavailable/,'legacy configuration floor stays 100 ms');
+});
+
+test('U81-B1a admission timeout kills TERM-ignoring checker, reaps and cleans before settling',async t=>{
+  const f=await selectedTransportFixture(t),text='{"hold":true,"ignoreTerm":true}';
+  await assert.rejects(f.adapter.checkSettings!(text,admissionContext(f,text),{signal:new AbortController().signal,timeoutMs:1500}));
+  const traces=await f.traces();assert.equal(traces.length,1);
+  assert.throws(()=>process.kill(traces[0].pid,0),{code:'ESRCH'},'checker is reaped before rejection');
+  assert.deepEqual(await readdir(join(f.root,'work')),[]);
+});
+
+test('U81-B1a policy forwarding deducts elapsed time without a second reserve',async t=>{
+  const f=await taskFixture();t.after(()=>f.db.close());let mono=0,received=0;
+  t.mock.method(performance,'now',()=>mono);
+  const signal=new AbortController().signal;
+  const policy=new LoopPolicyServiceV1(f.client,scope,{settingsText:'{}',get checkSettings(){mono+=200;return async (_text: string, _context?: import('../src/web/v1/loop-policy-service').LoopSelectionCheckContextV1, execution?: import('../src/web/v1/loop-policy-service').LoopSelectionCheckExecutionV1)=>{
+    received=execution!.timeoutMs;assert.equal(execution!.signal,signal);return {eligible:true,reasons:[]};
+  };}});
+  await policy.checkWith('{}',{mode:'preview',sameFamilyIntent:false},{signal,timeoutMs:4000});
+  assert.equal(received,3800,'forwarding time reduces allowance; no reserve is subtracted here');
 });

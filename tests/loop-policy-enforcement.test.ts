@@ -327,6 +327,8 @@ import { readFile } from 'node:fs/promises';
 import { readPrivateWebSchemaDigest } from '../src/web/v1/private-database-preflight';
 test('P72 empty enforcement down re-up restores exact shape and retained unlocked layers refuse',async t=>{
   const f=await fixture(t),before=await readPrivateWebSchemaDigest(f.client);
+  await f.db.exec(await readFile('db/down/0317_control_loop_selection_acknowledgement_validate.sql','utf8'));
+  await f.db.exec(await readFile('db/down/0316_control_loop_selection_acknowledgement.sql','utf8'));
   await f.db.exec(await readFile('db/down/0315_control_loop_paid_admission.sql','utf8'));
   await f.db.exec(await readFile('db/down/0314_control_loop_policy_enforcement.sql','utf8'));
   assert.equal(await readPrivateWebSchemaDigest(f.client),'388364abf81943ff1a8aca8eb7ed153b73239c0e2a935f896c2d51635ba29422');
@@ -340,8 +342,13 @@ test('P72 empty enforcement down re-up restores exact shape and retained unlocke
       .map(conname=>({conname,convalidated:false})), '0314 enforces new writes without validating retained rows in its DDL transaction');
     await f.db.exec('BEGIN');
     await f.db.exec(await readFile('db/migrations/0315_control_loop_paid_admission.sql','utf8'));await f.db.exec('COMMIT');
-    assert.ok((await validation()).every(row=>row.convalidated), '0315 validates all retained rows in the following transaction'); }
+    assert.ok((await validation()).every(row=>row.convalidated), '0315 validates all retained rows in the following transaction');
+    for (const file of ['0316_control_loop_selection_acknowledgement.sql','0317_control_loop_selection_acknowledgement_validate.sql']) {
+      await f.db.exec('BEGIN');await f.db.exec(await readFile('db/migrations/'+file,'utf8'));await f.db.exec('COMMIT');
+    } }
   catch(error) { await f.db.exec('ROLLBACK');throw error; }
+  await f.db.exec(await readFile('db/roles/private_web_roles.sql','utf8'));
+  assert.equal((await f.db.query<{allowed:boolean}>(`SELECT has_table_privilege('control_room_private_web','control_loop_policy_input_admissions','INSERT') allowed`)).rows[0]!.allowed,true);
   assert.equal(await readPrivateWebSchemaDigest(f.client),before,'no physical column-number drift after empty down re-up');
   await f.service.put(f.identity,f.project.projectId,'project',{expectedVersion:0,settings:'{}',lockedPaths:[]},key());
   const rows=(await f.db.query('SELECT * FROM control_loop_policy_layers')).rows;

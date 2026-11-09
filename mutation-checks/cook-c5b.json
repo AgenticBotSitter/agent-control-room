@@ -57,7 +57,7 @@
   },
   {
     "file": "src/updater/v1/services/protected-config.mjs",
-    "find": "`sha256:ca6abe60f7af052f0775c838b1ce997de29e01106760dfbd54b95faff5adf31b`;",
+    "find": "`sha256:a3d192c87fd6fedf65b0f8c589958b9c52c7add178152db2178320ee5853ef1d`;",
     "replace": "`sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;",
     "test": "node --import tsx --test --test-name-pattern='release parsers accept' tests/updater-protected-config.test.mjs",
     "why": "the updater-owned backup golden must remain byte-compatible with the release migration ledger"
