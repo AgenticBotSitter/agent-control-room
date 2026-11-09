@@ -139,6 +139,7 @@ sqlGuardPartition("B4 SQL candidate immutability guards require independently lo
 sqlGuardPartition("B4 SQL grants guards require independently loaded native mutations",[sqlProbesAll[6]!]);
 
 test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{timeout:120000},async()=>{
+ await mkdir(resolve(".test-tmp"), { recursive: true });
  const copy=await mkdtemp(resolve(".test-tmp/b4-inert-mutation-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});
@@ -159,6 +160,7 @@ test("B4 inert decision callback mutation reaches the forbidden-attempt spy",{ti
 });
 
 test("B4 decided-state response mutation reaches the invariant assertion",{timeout:120000},async()=>{
+ await mkdir(resolve(".test-tmp"), { recursive: true });
  const copy=await mkdtemp(resolve(".test-tmp/b4-state-mutation-"));
  try{
   execFileSync("git",["-c","core.hooksPath=/dev/null","clone","--local","--no-hardlinks","--quiet",root,copy],{timeout:120000});

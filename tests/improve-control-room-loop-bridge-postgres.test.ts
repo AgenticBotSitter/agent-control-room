@@ -99,6 +99,7 @@ async function confirmed(pg:Pg,e:ReturnType<typeof engine>){
 test("B6 PostgreSQL roster reads bigint positions as numbers and appends max plus one", async t => run(async pg => {
   await seed(pg, pg.database, false);
   const w = web(pg, engine().adapter);
+  await mkdir(resolve(".test-tmp"), { recursive: true });
   const root = await mkdtemp(resolve('.test-tmp/b6-native-roster-'));
   const row = { name: 'first', launcher: 'synthetic', provider: '', family: '', class: '', roles: '', efforts: '',
     default_effort: '', cost: '', on: 'on', note: '', nick: '', max_build_grade: '' };
@@ -541,6 +542,7 @@ test('P71 PostgreSQL retained run-edit commands refuse down without changing row
 
 test('P71 PostgreSQL empty downgrade restores the merged down-chain schema and re-up preserves ledger after injected failure',async()=>run(async pg=>{
   const admin=new Client(pg.admin());await admin.connect();
+  await mkdir(resolve(".test-tmp"), { recursive: true });
   const stage=await mkdtemp(resolve('.test-tmp/p71-ledger-'));
   const validated=async()=>Boolean((await admin.query("SELECT convalidated FROM pg_constraint WHERE conrelid='control_loop_improvement_commands'::regclass AND conname='control_loop_improvement_commands_check1'")).rows[0].convalidated);
   try{
@@ -936,6 +938,7 @@ test('P72 PostgreSQL dropped connection after consumption rolls back then retry 
 test('S4 native admission pins and migration preserve signed history and reject malformed SQL',async()=>run(async pg=>{
  await seed(pg);const e=engine(true),{w,id,s}=await confirmed(pg,e);
  let app:ReturnType<typeof createMacLocalWebProcessV1>|undefined;
+ await mkdir(resolve(".test-tmp"), { recursive: true });
  const rosterRoot=await mkdtemp(resolve('.test-tmp/s4-native-roster-'));
  try{
   assert.deepEqual((await w.client.query('SELECT current_user,session_user')).rows,[{current_user:'control_room_web',session_user:'control_room_web'}]);

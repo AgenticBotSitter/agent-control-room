@@ -1,6 +1,6 @@
 import { isMainModuleV1 } from "../../src/installer/shared/is-main-module.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { listTestFiles, reachableTests } from "../check-test-lane-coverage.mjs";
 import { runUnits } from "./run-scripts-keep-going.mjs";
@@ -212,6 +212,29 @@ function guardedPostgresTests(result, tests, repositoryRoot) {
 // file, 67 files) measured past 10 minutes on the hosted runner.
 export const NODE_TEST_TIMEOUT_MS = 1_200_000;
 
+// Partition only the final execution list: sharding before macOS/bulk deferral
+// would change the half-suite threshold and accidentally expand coverage work.
+// Files remain serial within each shard; separate hosted VMs isolate databases,
+// fixed fixture paths and ports between shards.
+export function parseTestShard(value) {
+  if (value === undefined) return undefined;
+  const match = /^([1-9]\d*)\/([1-9]\d*)$/u.exec(value);
+  if (!match) throw new Error("AFFECTED_TEST_SHARD must be index/count (one-based)");
+  const index = Number(match[1]), count = Number(match[2]);
+  if (!Number.isSafeInteger(index) || !Number.isSafeInteger(count) || index > count)
+    throw new Error("AFFECTED_TEST_SHARD requires 1 <= index <= count");
+  return { index, count };
+}
+
+export function selectTestShard(tests, shard) {
+  if (shard === undefined) return tests;
+  // Validate callers as well as CLI input, failing closed on malformed plans.
+  if (!Number.isSafeInteger(shard.index) || !Number.isSafeInteger(shard.count) ||
+      shard.index < 1 || shard.index > shard.count)
+    throw new Error("AFFECTED_TEST_SHARD requires 1 <= index <= count");
+  return [...tests].sort().filter((_test, index) => index % shard.count === shard.index - 1);
+}
+
 function nodeTestCommand(test, repositoryRoot) {
   const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", test];
   if (testSources([test], repositoryRoot).some(source => squawkTestMarker.test(source)))
@@ -275,7 +298,7 @@ export function deferralMessage(result, selectedCount, totalTestCount) {
   const affected = result === "ALL" ? `all ${totalTestCount}` : `${selectedCount} of ${totalTestCount}`;
   return `This change affects ${affected} test file(s). The fast lane is skipping direct execution of the bulk here: ` +
     "the full-suite lanes (test-demo, test-server, test-components, test-updater, test-articles, full-gate) already run " +
-    "the rest of the suite, so re-running it in this 45-minute lane would only duplicate that coverage. " +
+    "the rest of the suite, so re-running it in this lane would only duplicate that coverage. " +
     "Any PostgreSQL-gated file still runs directly below, since no other lane sets up its environment.";
 }
 
@@ -292,8 +315,10 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
   ].join("\n");
 }
 
-export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
-  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform) {
+export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), {
+  execute = executeCommand, postgresAvailable = postgresBinariesAvailable,
+  executeCapturingOutput = executeCommandCapturingOutput, platform = process.platform, shard,
+} = {}) {
   if (result === "DOCS_ONLY") {
     console.log(noTestsAffectedMessage());
     return 0;
@@ -326,10 +351,10 @@ export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), 
     const pgTests = guardedPostgresTests(result, tests, repositoryRoot);
     if (pgTests.length === 0) return 0;
     console.log(`Running ${pgTests.length} PostgreSQL-gated test file(s) directly; no other lane provisions them.`);
-    return runAffectedTests(pgTests, pgTests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput);
+    return runAffectedTests(pgTests, pgTests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput, shard);
   }
   console.log(`Running ${tests.length} affected test file(s).`);
-  return runAffectedTests(result, tests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput);
+  return runAffectedTests(result, tests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput, shard);
 }
 
 function hasSkippedTests(output) {
@@ -340,8 +365,14 @@ function hasSkippedTests(output) {
 }
 
 export function runAffectedTests(result, tests, repositoryRoot, execute = executeCommand,
-  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
+  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput, shard) {
   if (result === "DOCS_ONLY") return 0;
+  const selectedCount = tests.length;
+  tests = selectTestShard(tests, shard);
+  if (shard) console.log(`Affected shard ${shard.index}/${shard.count}: ${tests.length} of ${selectedCount} execution file(s).`);
+  if (tests.length === 0) return 0;
+  // Every shard starts independently of test-file ordering in another leg.
+  mkdirSync(join(repositoryRoot, ".test-tmp"), { recursive: true });
   if (requiresPostgres(result, tests, repositoryRoot) && !postgresAvailable()) {
     console.error("Selected test plan requires PostgreSQL 17 binaries, but PG_BIN does not contain initdb, pg_ctl, postgres, and psql.");
     return 1;
@@ -383,6 +414,7 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
 function main() {
   const shouldRun = process.argv.includes("--run");
   const githubOutput = process.argv.includes("--github-output");
+  const shard = parseTestShard(process.env.AFFECTED_TEST_SHARD);
   const baseRef = requestedBaseRef(process.argv.slice(2));
   const root = process.cwd();
   const result = affectedTests(root, changedFiles(root, baseRef));
@@ -396,7 +428,7 @@ function main() {
     console.log(result === "ALL" ? result : result.join("\n"));
     return;
   }
-  process.exitCode = runSelectedTests(result, tests, root);
+  process.exitCode = runSelectedTests(result, tests, root, { platform: process.platform, shard });
 }
 
 if (isMainModuleV1(process.argv[1], import.meta.url)) main();
