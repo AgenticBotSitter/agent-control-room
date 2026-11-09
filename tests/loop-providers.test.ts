@@ -637,6 +637,7 @@ async function realS4Routes(t:TestContext, snapshot:import('../src/web/v1/improv
  const {createImproveControlRoomLoopAdapterV1}=await import('../src/web/v1/improve-control-room-loop-adapter');
  const loop=process.env.CONTROL_ROOM_A2_TEST_LOOP;
  assert.ok(loop,'real S4 resolver requires the pinned tools checkout');
+ await mkdir(resolve(".test-tmp"), { recursive: true });
  const root=await mkdtemp(resolve('.test-tmp/s4-real-'));
  t.after(()=>rm(root,{recursive:true,force:true}));
  for(const dir of ['tools/loop/bridge','config','runs','work','product'])await mkdir(join(root,dir),{recursive:true});

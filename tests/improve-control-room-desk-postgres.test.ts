@@ -819,6 +819,7 @@ for (const baseline of [GROUNDING, INSTALLED_RELEASE]) {
 }
 
 test("B1a upgrade failed 0301 rolls back objects and ledger then restored migration succeeds", async () => b1aRun(async pg => {
+  await mkdir(resolve(".test-tmp"), { recursive: true });
   const baseline = await extractBaseline(GROUNDING), staged = await mkdtemp(resolve(".test-tmp/b1a-failed-migration-")), database = "b1a_failed_upgrade";
   try {
     await b1aSql(pg, `CREATE DATABASE ${database}`); await applyB1aRelease(pg, baseline, database); await applyB1aRoles(pg, baseline, database, true);
@@ -1021,6 +1022,7 @@ test("B1b upgrade from reviewed B1a preserves signed legacy and lineage bytes", 
     } finally { await beforeWeb.close(); }
     const retained: Record<string, unknown> = {};
     for (const table of LOOP_TABLES) retained[table] = (await b1aSql(pg, `SELECT * FROM ${table} ORDER BY record_digest`, [], database)).rows;
+    await mkdir(resolve(".test-tmp"), { recursive: true });
     const staged = await mkdtemp(resolve(".test-tmp/b1b-failed-upgrade-"));
     try {
       await cp(resolve("db"), join(staged, "db"), { recursive: true });

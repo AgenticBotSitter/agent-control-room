@@ -49,13 +49,20 @@ concurrency:
 
 jobs:
   affected-tests:
-    name: Affected tests (fast)
+    name: Affected tests (fast, ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
-    # A full-suite change still runs all 124 PostgreSQL-gated files directly. Measured on
-    # 2026-10-04: 77 files in about 85 minutes, so about 140 minutes for the full set. 240
-    # leaves margin until the sharded lane replaces this single job.
-    timeout-minutes: 240
+    # Run 42384138047 spent 232 minutes in 141 completed files before cancellation.
+    # Eight isolated VMs stripe the final execution list; each file keeps its
+    # original command, environment, skip guard and 20-minute per-file budget.
+    # Budget/security: public standard runners; seven extra copies of setup,
+    # up to eight concurrent allocations, no new permissions or credentials.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
+      AFFECTED_TEST_SHARD: ${{ matrix.shard }}/8
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -1320,6 +1327,10 @@ jobs:
           }
           echo "Lane results:"
           check affected-tests "${{ needs.affected-tests.result }}"
+          # No routing exception: every affected-test shard must succeed.
+          if [ "${{ needs.affected-tests.result }}" != "success" ]; then
+            status=1
+          fi
           check route "${{ needs.route.result }}"
           check mutation-checks "${{ needs.mutation-checks.result }}"
           check pr-claims "${{ needs.pr-claims.result }}"
