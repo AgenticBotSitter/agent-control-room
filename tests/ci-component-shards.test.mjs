@@ -21,6 +21,18 @@ const expected = originalChecks.flatMap(step => step === chain
   : [{ name: step.name, command: step.run, env: step.env ?? {} }]);
 const sort = values => [...values].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
+test("selection mutation guard has one affected-shard owner and runs the whole file", () => {
+  const job = workflow.jobs["affected-tests"];
+  assert.deepEqual(job.strategy.matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+  const guards = job.steps.filter(step => step.run?.includes("test:loop-selection-mutations"));
+  assert.equal(guards.length, 1);
+  assert.equal(guards[0].if, "${{ matrix.shard == 1 }}");
+  assert.equal(guards[0].run, "pnpm run test:loop-selection-mutations");
+  assert.equal(guards[0]["continue-on-error"], undefined);
+  assert.match(scripts["test:loop-selection-mutations"], / tests\/loop-selection-mutations\.test\.ts$/u);
+  assert.doesNotMatch(scripts["test:loop-selection-mutations"], /--test-(?:skip|name)-pattern/u);
+});
+
 function selectedChecks(job = components, packageScripts = scripts) {
   return shards.flatMap(shard => job.steps.filter(step =>
     step.if === `\${{ !cancelled() && matrix.shard == '${shard}' }}`

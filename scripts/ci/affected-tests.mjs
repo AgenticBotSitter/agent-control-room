@@ -245,7 +245,10 @@ export function selectTestShard(tests, shard) {
   if (!Number.isSafeInteger(shard.index) || !Number.isSafeInteger(shard.count) ||
       shard.index < 1 || shard.index > shard.count)
     throw new Error("AFFECTED_TEST_SHARD requires 1 <= index <= count");
-  return [...tests].sort().filter((_test, index) => index % shard.count === shard.index - 1);
+  // CI runs this complete file explicitly on shard 1, before affected selection.
+  // Keep unsharded local execution intact while avoiding a second CI invocation.
+  return tests.filter(test => test !== "tests/loop-selection-mutations.test.ts")
+    .sort().filter((_test, index) => index % shard.count === shard.index - 1);
 }
 
 function nodeTestCommand(test, repositoryRoot) {

@@ -83,6 +83,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Prove selection admission and custody guards
+        if: ${{ matrix.shard == 1 }}
         timeout-minutes: 12
         run: pnpm run test:loop-selection-mutations
       - name: Calculate affected-test requirements

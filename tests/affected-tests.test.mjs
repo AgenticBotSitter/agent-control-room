@@ -793,6 +793,26 @@ test("every selected file belongs to exactly one shard, including empty and unev
   }
 });
 
+test("the explicit mutation guard is excluded from shard execution but retained locally", () => {
+  const mutation = "tests/loop-selection-mutations.test.ts";
+  const names = [mutation, "tests/ordinary.test.mjs"];
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [];
+  const capture = (_command, args) => {
+    calls.push(args.at(-1));
+    return { status: 0, output: "# skipped 0\n" };
+  };
+  try {
+    for (let index = 1; index <= 8; index++)
+      assert.equal(runAffectedTests(names, names, root, () => 0, () => true, capture,
+        { index, count: 8 }), 0);
+    assert.deepEqual(calls, [names[1]]);
+    calls.length = 0;
+    assert.equal(runAffectedTests(names, names, root, () => 0, () => true, capture), 0);
+    assert.deepEqual(calls, names);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
 test("sharding the final plan preserves commands and environments after bulk and macOS deferral", () => {
   const files = Object.fromEntries(Array.from({ length: 210 }, (_, index) =>
     [`tests/t${index}.test.mjs`, index % 2 === 0 ? "// requiresRealPostgres; dist-vps" : "// dist-contributor"]));
@@ -874,7 +894,8 @@ test("B8 selection additions remain selectable across eight shards and migration
   const partition = partitionB8ExternalHostV1(added, added);
   const combined = Array.from({ length: 8 }, (_, index) =>
     selectTestShard(partition.tests, { index: index + 1, count: 8 })).flat();
-  assert.deepEqual(combined.sort(), added.filter(file => file !== b8HostOnlyFileV1).sort());
+  assert.deepEqual(combined.sort(), added.filter(file => file !== b8HostOnlyFileV1
+    && file !== "tests/loop-selection-mutations.test.ts").sort());
 });
 
 test("the real repository's broad execution plan survives all eight shards unchanged", () => {
