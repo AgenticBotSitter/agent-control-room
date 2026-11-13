@@ -389,9 +389,11 @@ test("B11 preflight root guard switched off fails the named cross-profile assert
   await symlink(resolve("scripts"), join(copyRoot, "scripts"), "dir");
   await symlink(resolve("src"), join(copyRoot, "src"), "dir");
   await symlink(resolve("node_modules"), join(copyRoot, "node_modules"), "dir");
+  await symlink(resolve("tests/helpers/improve-control-room-loop-recovery.ts"), join(copyRoot, "tests/helpers/improve-control-room-loop-recovery.ts"));
   const helper = resolve("tests/helpers/improve-control-room-first-website.ts"), file = join(copyRoot, "tests/helpers/improve-control-room-first-website.ts");
   const source = await readFile(helper, "utf8"), anchor = 'if (!(input.profile?.rootName ?? /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u).test(root.slice(dirname(root).length + 1)))';
   assert.ok(source.includes(anchor)); await writeFile(file, source.replace(anchor, "if (false)"));
+  await assert.doesNotReject(() => import(file), "B11 copied preflight helper resolves dependencies before the guard probe");
   const env: NodeJS.ProcessEnv = { ...process.env, CONTROL_ROOM_B11_TEST_HELPER: file }; delete env.NODE_TEST_CONTEXT;
   const args = ["--import", "tsx", "--test", "--test-concurrency=1", "--test-timeout=600000", "--test-name-pattern=^B11 cross-profile model-eval roots", "tests/improve-control-room-second-project.test.ts"];
   const disabled = spawnSync(process.execPath, args, { env, encoding: "utf8", timeout: 60_000 });
