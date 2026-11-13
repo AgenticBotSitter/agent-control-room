@@ -104,12 +104,14 @@ const retentionClockFunctions = new Map([
   ["public.result_upload_expired_after_hours()",
     new Set(["control_room_private_web", "control_room_fleet_gateway"])],
 ]);
-const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
+const knownFunctionGrant = object => object === "public.control_loop_selection_ack_timestamp_v1(text)"
+  || object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
   || object === fleetClaimFunction || ownerPushEndpointFunctions.has(object)
   || plannerFunctions.has(object)
   || agentReviewFunctions.has(object)
   || retentionClockFunctions.has(object);
-const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
+const allowedFunctionGrant = (role, object) => object === "public.control_loop_selection_ack_timestamp_v1(text)" && role === "control_room_private_web"
+  || object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
   || (object === fleetEnrollmentFunction || object === fleetClaimFunction) && role === "control_room_fleet_gateway"
   || ownerPushEndpointFunctions.has(object) && role === "control_room_private_web"
   || (plannerFunctions.get(object)?.has(role) ?? false)

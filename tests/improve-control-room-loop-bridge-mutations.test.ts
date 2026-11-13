@@ -29,7 +29,8 @@ const probes=[
     find:'observed = await status(run);',replace:'throw unavailable();',
     pattern:"^B1b exit 2 approve empty",assertion:"definite process refusal is recorded as refused",postgres:false},
   {name:"finished command startup sweep",file:"src/web/v1/improve-control-room-loop-service.ts",
-    find:'await this.#sweepCommandFiles(identity, projectId);',replace:'/* MUTANT: omit finished command sweep. */',
+    find:'try { return await this.#dispatch(identity, projectId, operation, body, preflight, admitted); }\n    finally { await this.#sweepCommandFiles(identity, projectId); }',
+    replace:'return await this.#dispatch(identity, projectId, operation, body, preflight, admitted); /* MUTANT: omit finished command sweep. */',
     pattern:"^B1b first-use sweep removes only durable finished command directories$",assertion:"first-use sweep reclaims durable finished command",postgres:false},
   {name:"cleanup failure preserves receipt",file:"src/web/v1/improve-control-room-loop-service.ts",
     find:'try { await this.#adapter.releaseCommandFiles?.(claim.command_id); } catch { /* Retain for an authorized retry. */ }',
@@ -86,10 +87,14 @@ const probes=[
     find:'loopKey.length === legacyKey.length && timingSafeEqual(loopKey, legacyKey);',replace:'true;',
     pattern:"^B1b split loop and legacy",assertion:"hosted composition refuses a split loop key",postgres:false},
 ];
-test("B1b guard-off proofs with restored green checks",{timeout:550000,concurrency:2},async t=>{
+// Saved CI exhausted 550s during probe 25; its serial non-PG group needs
+// about 24 * 28s = 672s. A 900s parent leaves 228s (34%) over that estimate.
+// R13's complete local run took 283.2s, so local speed is not the CI budget.
+// package.json allows 960s, and CI allows 17 minutes, for teardown headroom.
+test("B1b guard-off proofs with restored green checks",{timeout:900000,concurrency:2},async t=>{
   await mkdir(resolve(".test-tmp"),{recursive:true});const copies:string[]=[];
   try{
-    // PostgreSQL setup dominates this lane. Each group owns an independent
+    // The serial non-PG group dominates the saved CI run. Each group owns an independent
     // clean copy; every baseline, mutation and restored check is preserved.
     const groups=await Promise.allSettled([false,true].map(async postgres=>{
     const copy=await mkdtemp(resolve(".test-tmp/b1b-mutations-"));copies.push(copy);

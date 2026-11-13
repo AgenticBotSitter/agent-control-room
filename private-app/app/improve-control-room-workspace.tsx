@@ -10,6 +10,8 @@ import { ImprovementRunPanel, useFirstGatePolling } from "./improvement-run-pane
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { LoopProviderSection } from "./loop-provider-panel";
+import { LoopRosterSection } from "./loop-roster-panel";
 
 type ReadState = { state: "loading" } | { state: "unavailable" } | { state: "ready"; value: ImprovementDeskViewV1 };
 type DeskRead = Awaited<ReturnType<typeof loopImprovementBrowserClient.readDesk>>;
@@ -118,6 +120,8 @@ function BoundImproveWorkspace({ projectId }: { projectId: string }) {
     {desk?.kind === "loop" && <ImprovementIntakeForm key={projectId} projectId={projectId} enabled={!!read.value && !read.error} onSaved={requestId => {
       window.location.hash = `request=${encodeURIComponent(requestId)}`; setSelection(requestId); setGeneration(value => value + 1);
     }} />}
+    {desk?.kind === "loop" && <LoopRosterSection />}
+    {desk?.kind === "loop" && <LoopProviderSection />}
     <h2>Legacy pipelines</h2>
     {data.state === "loading" ? <p role="status">Loading saved improvement desk…</p>
       : data.state === "unavailable" ? <section className="private-panel"><h2>Desk unavailable</h2>

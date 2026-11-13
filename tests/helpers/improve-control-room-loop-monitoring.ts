@@ -9,20 +9,20 @@ import { createImproveControlRoomLoopAdapterV1, type LoopAdapterV1, loopByteHash
 export async function monitoringEngine(t: TestContext) {
   const e = await syntheticRecoveryEngine(t);
   const entry = e.configuration.entrypoint;
-  const cli = `import os,sys,json,time,signal\nroot=os.path.dirname(os.path.abspath(__file__))\nif sys.argv[1:]==['logins','--json']:\n    with open(os.path.join(root,'health-trace.jsonl'),'a') as f: f.write(json.dumps(dict(argv=sys.argv[1:],env=dict(os.environ),pid=os.getpid()))+'\\n')\n    try:\n        with open(os.path.join(root,'health-behavior.json')) as f: b=json.load(f)\n    except FileNotFoundError: b={}\n    if b.get('ignoreTerm'): signal.signal(signal.SIGTERM,signal.SIG_IGN)\n    if b.get('hold'):\n        while not os.path.exists(os.path.join(root,'release')): time.sleep(.01)\n    if b.get('overflow'): os.write(1,b'x'*65537);sys.exit(0)\n    if b.get('malformed'): print('not json');sys.exit(0)\n    if b.get('invalidUtf8'): os.write(1,b'\\xff');sys.exit(0)\n    print(json.dumps(dict(schema_version=1,checked_at=b.get('checkedAt',time.strftime('%Y-%m-%dT%H:%M:%S.000Z',time.gmtime())),entries=b.get('entries',[dict(model='SYNTHETIC',route='unseen-route',available=True)]))))\n    sys.exit(b.get('exit',0))\n`;
+  const cli = `import os,sys,json,time,signal\nroot=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))\nif sys.argv[1:]==['logins','--json']:\n    with open(os.path.join(root,'health-trace.jsonl'),'a') as f: f.write(json.dumps(dict(argv=sys.argv[1:],env=dict(os.environ),pid=os.getpid()))+'\\n')\n    try:\n        with open(os.path.join(root,'health-behavior.json')) as f: b=json.load(f)\n    except FileNotFoundError: b={}\n    if b.get('ignoreTerm'): signal.signal(signal.SIGTERM,signal.SIG_IGN)\n    if b.get('hold'):\n        while not os.path.exists(os.path.join(root,'release')): time.sleep(.01)\n    if b.get('overflow'): os.write(1,b'x'*65537);sys.exit(0)\n    if b.get('malformed'): print('not json');sys.exit(0)\n    if b.get('invalidUtf8'): os.write(1,b'\\xff');sys.exit(0)\n    print(json.dumps(dict(schema_version=1,checked_at=b.get('checkedAt',time.strftime('%Y-%m-%dT%H:%M:%S.000Z',time.gmtime())),entries=b.get('entries',[dict(model='SYNTHETIC',route='unseen-route',available=True)]))))\n    sys.exit(b.get('exit',0))\n`;
   await writeFile(entry,cli+await readFile(entry,'utf8'));
   const configuration={...e.configuration,entrypointSha256:loopByteHashV1(await readFile(entry))};
   await chmod(e.root,0o700);await chmod(configuration.availabilityFile,0o600);
   const traces=async()=>{try{return(await readFile(join(e.root,'health-trace.jsonl'),'utf8')).trim().split('\n').map(s=>JSON.parse(s)) as {argv:string[];env:Record<string,string>;pid:number}[];}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;}};
   const behavior=(value:object)=>writeFile(join(e.root,'health-behavior.json'),JSON.stringify(value));
   const raw=createImproveControlRoomLoopAdapterV1(configuration);t.after(()=>raw.close());
-  const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string)=>{
-    const status=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):raw[op](id,b,fence));
+  const apply=async(op:'intake'|'confirm'|'start'|'stop'|'approve'|'answer',id:string,b:LoopBridgeBindingV1,fence:()=>void,text?:string,settings?:string,admission?:import('../../src/web/v1/improve-control-room-loop-adapter').LoopStartAdmissionV1)=>{
+    const status=await(op==='intake'?raw.intake(id,b,text!,fence):op==='confirm'?raw.confirmRequest(id,b,fence):op==='answer'?raw.answer(id,b,text!,fence):op==='start'?raw.start(id,b,fence,settings,admission):raw[op](id,b,fence));
     if(['confirm','start','approve'].includes(op))await raw.releaseCommandFiles!(id);
     status.receipts.push({commandId:id,bindingDigest:sha256Digest(b),state:'accepted',error:null,evidenceDigest:sha256Digest({id,op})});
     await e.edit(b.loopRunId,status);return status;
   };
-  const adapter:LoopAdapterV1={...raw,intake:(id,b,text,f)=>apply('intake',id,b,f,text),confirmRequest:(id,b,f)=>apply('confirm',id,b,f),start:(id,b,f)=>apply('start',id,b,f),stop:(id,b,f)=>apply('stop',id,b,f),approve:(id,b,f)=>apply('approve',id,b,f),answer:(id,b,text,f)=>apply('answer',id,b,f,text)};
+  const adapter:LoopAdapterV1={...raw,intake:(id,b,text,f)=>apply('intake',id,b,f,text),confirmRequest:(id,b,f)=>apply('confirm',id,b,f),start:(id,b,f,settings,admission)=>apply('start',id,b,f,undefined,settings,admission),stop:(id,b,f)=>apply('stop',id,b,f),approve:(id,b,f)=>apply('approve',id,b,f),answer:(id,b,text,f)=>apply('answer',id,b,f,text)};
   return {...e,raw,adapter,configuration,healthTraces:traces,behavior};
 }
 export async function until(check:()=>Promise<boolean>,ms=4000){

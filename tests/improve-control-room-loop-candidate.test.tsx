@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
@@ -13,7 +14,7 @@ const contract = { toolingRevision, decodeRunIdentity: (v: unknown) => loopImpro
   decodeObservation: (v: unknown) => loopImprovementObservationSchemaV1.parse(v), matchesSavedInput: () => true };
 
 test("B4 finished candidate reaches Home and saved request", async () => {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   const loopCandidates = { integrityKey: KEY, contract, schemaDigest,
     source: { toolingRevision, schemaDigest, readVerifiedCompletion: async () => { throw new Error("SYNTHETIC absent completion"); } },
     repository: { observe: async () => { throw new Error("SYNTHETIC absent repository"); } } };
@@ -33,7 +34,7 @@ test("B4 finished candidate reaches Home and saved request", async () => {
 // website: real bridge intake, Confirm and Start, each under its own browser key, so the
 // Confirm-recorded authorization start key never equals the Start claim's key.
 async function syntheticFixture(options: { website?: boolean } = {}) {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   const { ImproveControlRoomDeskServiceV1 } = await import("../src/improve-control-room/v1/service");
   const { ImproveControlRoomLoopServiceV1 } = await import("../src/web/v1/improve-control-room-loop-service");
   const { LoopCandidatePublisherV1, LoopCandidateStaleCompletionV1 } = await import("../src/improve-control-room/v1/loop-candidate-publisher");
@@ -42,7 +43,7 @@ async function syntheticFixture(options: { website?: boolean } = {}) {
   const { canonicalJson, hmacSha256Tag } = await import("../src/security");
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`,[f.project.projectId]);
-  const settingsText='{"fixture":"SYNTHETIC B4"}', description="SYNTHETIC finished improvement";
+  const settingsText=JSON.stringify({fixture:"SYNTHETIC B4",providerRoute:S4_FIXTURE_ROUTE}), description="SYNTHETIC finished improvement";
   const run={adapterId:"adapter:synthetic",loopRunId:"synthetic-run:b4",toolingRevision,a2SchemaVersion:1 as const};
   const confirmedContract={...contract,matchesSavedInput:(_run:unknown,o:{settingsDigest:string;confirmation:{sha256:string}},i:{description:string;settingsText:string}) =>
     o.settingsDigest===loopByteHashV1(i.settingsText) && o.confirmation.sha256===loopByteHashV1(i.description)};
@@ -51,7 +52,9 @@ async function syntheticFixture(options: { website?: boolean } = {}) {
     confirmation:{path:"request.md",sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:"owner",input_version:"SYNTHETIC:1"},
     approval:null,question:null,progress:{step:"final",completed:1,attention:"none"},receipts:[]};
   const forbidden:string[]=[], unexpected=async()=>{forbidden.push("unexpected operation");throw new Error("SYNTHETIC forbidden");};
-  const adapter:import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,
+  const adapter:import("../src/web/v1/improve-control-room-loop-adapter").LoopAdapterV1={adapterId:run.adapterId,toolingRevision,schemaDigest,settingsText,contract:confirmedContract,providerRoutes:s4FixtureRoutes,
+    // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
+    checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     reserveRun:()=>run.loopRunId,available:()=>true,status:async()=>structuredClone(status),
     intake:options.website?async(id,b,text,fence)=>{fence();status={...status,revision:3,state:"draft",description:text,confirmation:null,
       receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC intake"})}]};return structuredClone(status);}:unexpected,
@@ -62,7 +65,7 @@ async function syntheticFixture(options: { website?: boolean } = {}) {
     start:async(id,b,fence)=>{fence();status={...status,state:"running",revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC Start"})}]};return structuredClone(status);},
     stop:unexpected,close:async()=>{}};
   const lineage=new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,confirmedContract);
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
   let draft:{request:{requestId:string}},link:{runLink:{runLinkId:string}};
   if(options.website){
     const intake=await bridge.mutate(f.identity,f.project.projectId,null,"intake",{description},"b4-website-intake-0001");
@@ -79,7 +82,7 @@ async function syntheticFixture(options: { website?: boolean } = {}) {
       requestSha256:loopByteHashV1(description),settingsSha256:loopByteHashV1(settingsText)},"b4-synthetic-start-0001",{
       inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,revision:status.revision,confirmation:status.confirmation!});
   }
-  const started=await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},
+  const started=await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},
     options.website?"b4-website-start-browser-0001":"b4-synthetic-start-0001");
   assert.equal(started.state,"accepted","B4 Start is accepted");
   const head="b".repeat(40),base="a".repeat(40),d=sha256Digest({fixture:"SYNTHETIC B4 custody"});
@@ -249,7 +252,7 @@ test("B4 Start claim naming another request's authorization is refused in servic
   const f=await syntheticFixture({website:true});
   try {
     const {loopByteHashV1}=await import("../src/web/v1/improve-control-room-loop-adapter");
-    const description="SYNTHETIC other improvement",settingsText='{"fixture":"SYNTHETIC B4"}',run={adapterId:f.adapter.adapterId,loopRunId:"synthetic-run:b4-other",toolingRevision,a2SchemaVersion:1 as const};
+    const description="SYNTHETIC other improvement",settingsText=JSON.stringify({fixture:"SYNTHETIC B4",providerRoute:S4_FIXTURE_ROUTE}),run={adapterId:f.adapter.adapterId,loopRunId:"synthetic-run:b4-other",toolingRevision,a2SchemaVersion:1 as const};
     const other=await f.lineage.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},"b4-other-draft-0001");
     const link=await f.lineage.recordLoopRunLink({projectId:f.project.projectId,requestId:other.request.requestId,initialInputVersion:1,run});
     const confirmation={path:"request.md",sha256:loopByteHashV1(description),at:new Date(now).toISOString(),who:"owner" as const,input_version:"SYNTHETIC:1"};
@@ -759,7 +762,7 @@ test("B4 focused test lanes and unconditional browser registration",async()=>{
 test("B4 edited then restored inputs keep the old candidate historical",async()=>{
  const f=await syntheticFixture();try{
   await f.publish();const c=(await f.desk.readLoopCandidates(f.identity)).candidates[0]!;
-  const settingsText='{"fixture":"SYNTHETIC B4"}',original="SYNTHETIC finished improvement";
+  const settingsText=JSON.stringify({fixture:"SYNTHETIC B4",providerRoute:S4_FIXTURE_ROUTE}),original="SYNTHETIC finished improvement";
   await f.lineage.reviseLoopDraft(f.identity,f.project.projectId,{requestId:f.requestId,expectedVersion:1,description:"Changed approved scope",settingsText},"b4-changed-input-0001");
   await f.lineage.reviseLoopDraft(f.identity,f.project.projectId,{requestId:f.requestId,expectedVersion:2,description:original,settingsText},"b4-restored-input-0001");
   const before=f.calls(),detail=await f.desk.readLoopCandidate(f.identity,f.project.projectId,f.requestId);
@@ -823,7 +826,7 @@ const twoRequestFixture=async(f:Awaited<ReturnType<typeof syntheticFixture>>)=>{
   const {ImproveControlRoomLoopServiceV1}=await import("../src/web/v1/improve-control-room-loop-service");
   const {LoopCandidatePublisherV1}=await import("../src/improve-control-room/v1/loop-candidate-publisher");
   const {loopByteHashV1}=await import("../src/web/v1/improve-control-room-loop-adapter");
-  const description="SYNTHETIC finished improvement",settingsText='{"fixture":"SYNTHETIC B4"}';
+  const description="SYNTHETIC finished improvement",settingsText=JSON.stringify({fixture:"SYNTHETIC B4",providerRoute:S4_FIXTURE_ROUTE});
   const run={adapterId:f.adapter.adapterId,loopRunId:"synthetic-run:b4-second",toolingRevision,a2SchemaVersion:1 as const};
   const draft=await f.lineage.saveLoopDraft(f.identity,f.project.projectId,{description,settingsText},"b4-second-draft-0001");
   const link=await f.lineage.recordLoopRunLink({projectId:f.project.projectId,requestId:draft.request.requestId,initialInputVersion:1,run});
@@ -836,8 +839,8 @@ const twoRequestFixture=async(f:Awaited<ReturnType<typeof syntheticFixture>>)=>{
    {inputVersion:status.inputVersion,settingsDigest:status.settingsDigest,revision:4,confirmation});
   const adapter={...f.adapter,status:async()=>structuredClone(status),start:async(id:string,b:unknown,fence:()=>void)=>{fence();
    status={...status,state:"running",revision:5,receipts:[{commandId:id,bindingDigest:sha256Digest(b),state:"accepted",error:null,evidenceDigest:sha256Digest({fixture:"SYNTHETIC second Start"})}]};return structuredClone(status);}};
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
-  try{await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-second-start-0001");}
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
+  try{await bridge.mutate(f.identity,f.project.projectId,draft.request.requestId,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:4,runLinkId:link.runLink.runLinkId},"b4-second-start-0001");}
   finally{await bridge.close();}
   const second=f.evidence();Object.assign(second.binding,{requestId:draft.request.requestId,runLinkId:link.runLink.runLinkId,loopRunId:run.loopRunId});
   let firstUnreadable=false;

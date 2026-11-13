@@ -587,8 +587,12 @@ test("B1a historical save and edit replays project the current authorized input"
   const f = await loopFixture(); t.after(() => void f.db.close()); const projectId = f.project.projectId;
   const edit = { requestId: f.start.requestId, expectedVersion: 1,
     description: "Second saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 2 }\n' };
+  const writesBeforeRefusal = f.writes();
+  await assert.rejects(f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-refused-0001"), { code: "conflict" });
+  assert.equal(f.writes(), writesBeforeRefusal, "D4 linked settings refusal appends no records");
+  edit.settingsText = f.draft.settingsText;
   await f.desk.reviseLoopDraft(f.identity, projectId, edit, "loop-replay-edit-0001");
-  const latest = { description: "Third saved request.", settingsText: '{ "fixture": "SYNTHETIC", "version": 3 }\n' };
+  const latest = { description: "Third saved request.", settingsText: f.draft.settingsText };
   await f.desk.reviseLoopDraft(f.identity, projectId, { requestId: f.start.requestId, expectedVersion: 2, ...latest },
     "loop-replay-edit-0002");
   await f.desk.authorizeLoopStart(f.identity, projectId, { ...f.start, expectedVersion: 3,
@@ -719,7 +723,7 @@ for (const difference of [-1, 1]) test(`B1a injected fixture catalog count ${dif
     if (sql.includes("SELECT c.relname AS name")) { catalog = true;
       // These cases isolate only catalog cardinality; the real PG case never substitutes query results.
       const actual = await tx.query<{ name: string }>(sql, params), rows = actual.rows;
-      assert.equal(rows.length, 253);
+      assert.equal(rows.length, 255);
       return { rows: (difference < 0 ? rows.slice(1) : [...rows, { name: "synthetic_extra_table" }]) as T[] };
     }
     if (sql.startsWith("LOCK TABLE")) locked = true;

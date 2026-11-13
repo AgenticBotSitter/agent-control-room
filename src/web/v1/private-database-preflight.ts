@@ -83,15 +83,13 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // PostgreSQL 17 (scripts/cook-digest-real-pg.mts) both read the value below. The
 // previous value was `85dbdd9b...`.
 //
-// Re-derived for cook/10int10 after perf2's 0272/0273, r5bk's 0285 and r6proj's
-// production_table_grants.sql met int9's set: real PostgreSQL 17
-// (scripts/cook-digest-real-pg.mts, production applier) reads the value below. The
-// previous value was `0b983887...`.
-// Current value includes the 0303 retained loop candidate schema and grants, the 0304
-// candidate guard that binds Start lineage to the signed authorization id, and 0305's
-// null-tolerant payload check/guard for Unavailable final-report sections. The previous
-// value was `16521bab...`.
-export const privateWebSchemaDigest = "3448fa44ef3ad086d46139684ba078f6af8ad43f6eee18af1342f095ed126529";
+// Re-derived for the merged main and B7 schema: main's 0303-0308 migrations
+// (update candidates, start authorization, unavailable sections, review identity
+// and constraint validation), plus B7's 0309-0315 roster, policy, providers,
+// prices, P72 locks/scoped waiver transitions/closed waiverId intake, paid admission, and D33 selection provenance.
+// Previous pins: main `3448fa44...`, B7 `0d0e9128...`.
+// Web/updater digests measured equal in PGlite and native PostgreSQL 17.
+export const privateWebSchemaDigest = "2d8114af1694cf47f6d49f4b9958198318a0a4ec0b666e746839c2fe94893ba9";
 /** Fleet tables the web login may read. These grants live in fleet_gateway_roles.sql, so they exist
  * only where the fleet gateway is installed; the Mac-local install has no fleet gateway at all.
  * `verifyDatabase` applies them conditionally, which keeps both shapes exact: with the gateway
@@ -136,6 +134,10 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_loop_improvement_requests", "control_loop_improvement_inputs",
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
   "control_loop_update_candidates", "control_loop_update_candidate_decisions",
+  "control_loop_roster_models", "control_loop_roster_state",
+  "control_loop_providers", "control_loop_provider_models", "control_loop_provider_state",
+  "control_loop_provider_prices", "control_loop_provider_fetches",
+  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources", "control_loop_policy_input_admissions", "control_loop_policy_waivers",
   // MIG-I: the per-item push retry head. The dispatcher reads its own rows to
   // notice, claim and settle, and holds nothing else on it. Listed here because
   // 0226 grants SELECT on it, and the column audit compares the live grant
@@ -194,7 +196,11 @@ privateWebInsertTables.add("control_job_dependencies");
 privateWebInsertTables.add("control_project_settings"); privateWebInsertTables.add("pipeline_unattended_transitions");
 for (const table of ["control_loop_improvement_requests", "control_loop_improvement_inputs",
   "control_loop_improvement_run_links", "control_loop_improvement_authorizations", "control_loop_improvement_commands",
-  "control_loop_update_candidates", "control_loop_update_candidate_decisions"]) privateWebInsertTables.add(table);
+  "control_loop_update_candidates", "control_loop_update_candidate_decisions",
+  "control_loop_roster_models", "control_loop_roster_state",
+  "control_loop_providers", "control_loop_provider_models", "control_loop_provider_state",
+  "control_loop_provider_prices", "control_loop_provider_fetches",
+  "control_loop_policy_layers", "control_loop_policy_events", "control_loop_policy_input_sources", "control_loop_policy_input_admissions", "control_loop_policy_waivers"]) privateWebInsertTables.add(table);
 privateWebInsertTables.add("control_improvement_requests"); privateWebInsertTables.add("control_update_candidate_decisions");
 privateWebInsertTables.add("owner_web_push_subscriptions"); privateWebInsertTables.add("owner_web_push_deliveries");
 // MIG-I: the dispatcher writes the FIRST head for a newly noticed item and
@@ -271,6 +277,15 @@ export const privateWebUpdateColumns: Record<string, readonly string[]> = {
   control_jobs: ["web_lock", "stage_kind", "stage_ordinal", "pipeline_run_id"],
   projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
+  // 0305: roster rows are edited in place; the state row holds version, export marker and replay key.
+  control_loop_providers: ["display_name","base_url","billing_kind","secret_ref","price_source_url","price_source_format","credit_amount_nano_usd","credit_expires_on","credit_note","updated_by","updated_at"],
+  control_loop_provider_fetches: ["outcome","reason","fetched_at"],
+  control_loop_provider_state: ["version","last_idempotency_key","last_request_digest","updated_at"],
+  control_loop_policy_layers: ["version", "settings_text", "settings_sha256", "updated_by", "updated_at", "last_idempotency_key", "last_request_digest", "locked_paths"],
+  control_loop_policy_waivers: ["revoked_at", "consumed_by_request_id"],
+  control_loop_roster_models: ["launcher", "provider", "family", "model_class", "roles", "efforts", "default_effort", "cost",
+    "on_off", "note", "nick", "max_build_grade", "updated_by", "updated_at"],
+  control_loop_roster_state: ["version", "exported_version", "exported_sha256", "last_idempotency_key", "last_request_digest", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
   control_project_coordinator_heads: ["state", "coordinator_identity_id", "coordinator_actor_type", "executor_id", "adapter_id",
     "connector_profile_digest", "execution_binding_digest", "assigned_by_owner_identity_id", "version",
@@ -832,7 +847,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedInserts = kind === "agentReviewer" ? agentReviewerInserts : kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : privateWebInsertTables;
   const allowedUpdates = kind === "agentReviewer" ? agentReviewerUpdates : kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : privateWebUpdateColumns;
   const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : kind === "web"
-    ? new Set(["owner_web_push_subscriptions"]) : new Set<string>();
+    ? new Set(["owner_web_push_subscriptions", "control_loop_providers", "control_loop_provider_models", "control_loop_provider_prices", "control_loop_provider_fetches"]) : new Set<string>();
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);
@@ -890,6 +905,16 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
                'control_room_schema_owner', the pinned search_path, no EXECUTE for
                PUBLIC, and an ACL admitting exactly the one login the role file
                grants it to. */
+            OR (p.oid='control_loop_selection_ack_timestamp_v1(text)'::regprocedure
+              AND NOT p.prosecdef AND p.provolatile='i' AND p.prokind='f' AND p.prorettype='timestamptz'::regtype
+              AND p.pronargs=1 AND NOT p.proleakproof AND p.proparallel='u'
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee)<>'control_room_private_web')))
             OR (p.oid='planner_failure_scope_key(text,jsonb)'::regprocedure
               AND NOT p.prosecdef AND p.provolatile='i' AND p.prokind='f' AND p.prorettype='text'::regtype
               AND p.pronargs=2 AND NOT p.proleakproof AND p.proparallel='u'

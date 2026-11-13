@@ -224,6 +224,32 @@ test("CR-E075 real owner HTTP", () => fixture(5, async ({ live, admin }) => {
     assert.deepEqual((await live.store.list("tenant:subscribe-second")).map(fields), [fields({ ...INPUT, tenantId: "tenant:subscribe-second" })]);
   });
 }));
+test("CR-E075 concurrent fresh subscriptions arbitrate both unique indexes", () => fixture(6, async ({ live, admin }) => {
+  // Every round starts with a missing endpoint to exercise speculative inserts
+  // into both the (tenant,id) primary key and (tenant,endpoint) unique index,
+  // using the real bounded eight-session web pool.
+  await Promise.all(Array.from({ length: 8 }, () => live.db.client.query("SELECT pg_sleep(0.05)")));
+  const before = await counters(admin);
+  for (let round = 0; round < 64; round++) {
+    const endpoint = `${ENDPOINT}-fresh-${round}`;
+    const inputs = Array.from({ length: 20 }, (_, n) => ({ ...INPUT, endpoint, p256dh: `Fresh_${round}_${n}`, auth: `Auth_${n}` }));
+    const results = await Promise.allSettled(inputs.map(input => live.store.subscribe(input)));
+    assert.equal(results.filter(result => result.status === "fulfilled").length, 16,
+      `fresh round ${round}: ${JSON.stringify(results.map(result => result.status === "fulfilled" ? "ok" : `${result.reason.code}:${result.reason.sqlState}`))}`);
+    const refused = results.filter(result => result.status === "rejected");
+    assert.equal(refused.length, 4);
+    for (const result of refused) if (result.status === "rejected") {
+      assert.equal(result.reason.code, "database_unavailable");
+      assert.equal(result.reason.sqlState, undefined, "only bounded admission may refuse a concurrent save");
+    }
+    const saved = (await admin.query("SELECT p256dh,auth FROM owner_web_push_subscriptions WHERE tenant_id=$1 AND endpoint=$2", [TENANT, endpoint])).rows;
+    assert.equal(saved.length, 1, "all admitted saves share one subscription");
+    assert.ok(inputs.some((input, n) => results[n]!.status === "fulfilled" && input.p256dh === saved[0].p256dh && input.auth === saved[0].auth),
+      "saved keys are one complete admitted input");
+  }
+  assert.equal(await counters(admin), before, "concurrent subscription creation cannot deadlock");
+  console.log("CR-E075 fresh:64 rounds;1024 completed;256 admission refusals;0 SQL failures");
+}));
 test("CR-E075 slow and dropped connection", () => fixture(7, async ({ live, admin, pg }) => {
   await subscribe(live); const id = await history(live); const before = await counters(admin);
   const slow = binding(pg); const lock = new Client(pg.admin()); await lock.connect();

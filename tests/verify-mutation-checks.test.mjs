@@ -1027,6 +1027,47 @@ test("a test-created stray file is reported distinctly after restoration", () =>
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+// Independent measured budget contract: saved CI exhausted 550s, whereas the
+// R13 local full run took 283.2s. Reserve 900s for the parent, 60s for runner
+// cleanup, another 60s for the CI step, and setup headroom in the job.
+const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+const yaml = createRequire(import.meta.resolve("eslint"))("js-yaml");
+const budgetWorkflow = yaml.load(workflow).jobs;
+const bridge = readFileSync(new URL("./improve-control-room-loop-bridge-mutations.test.ts", import.meta.url), "utf8");
+const bridgeLane = "test:improve-control-room-loop-bridge-mutations";
+
+test("bridge mutation lane retains its measured parent, runner, step and job budgets", () => {
+  assertMutationLaneCoverage(scripts, budgetWorkflow, bridge);
+  assert.match(scripts[bridgeLane], /--test-timeout=960000(?: |$)/u);
+  assert.equal(budgetWorkflow["mutation-checks-lineage"]["timeout-minutes"], 50);
+  assert.equal(budgetWorkflow["mutation-checks-lineage"].steps.find(step => step.run === `pnpm run ${bridgeLane}`)["timeout-minutes"], 17);
+});
+
+test("bridge lane guard rejects a stale, missing or commented parent timeout", () => {
+  for (const replacement of ["timeout:550000", "timeout:600000", "timeout:1800000", "timeout:900000,timeout:550000", "/* timeout:900000 */", "concurrency:2"]) {
+    const altered = bridge.replace(/timeout:\s*\d+/u, replacement);
+    assert.notEqual(altered, bridge, "the independent parent-timeout mutation must apply");
+    assert.throws(() => assertMutationLaneCoverage(scripts, budgetWorkflow, altered), { name: "AssertionError" }, replacement);
+  }
+});
+
+test("bridge lane guard rejects reduced, missing, widened or overriding runner timeouts", () => {
+  for (const replacement of ["--test-timeout=600000", "", "--test-timeout=1800000", "--test-timeout=960000 --test-timeout=550000"]) {
+    const altered = { ...scripts, [bridgeLane]: scripts[bridgeLane].replace(/--test-timeout=\d+/u, replacement) };
+    assert.throws(() => assertMutationLaneCoverage(altered, budgetWorkflow, bridge), { name: "AssertionError" }, replacement);
+  }
+});
+
+test("bridge lane guard rejects insufficient workflow step and job headroom", () => {
+  for (const target of ["step", "job"]) {
+    const altered = structuredClone(budgetWorkflow);
+    const job = altered["mutation-checks-lineage"];
+    if (target === "step") job.steps.find(step => step.run === `pnpm run ${bridgeLane}`)["timeout-minutes"] = 10;
+    else job["timeout-minutes"] = 45;
+    assert.throws(() => assertMutationLaneCoverage(scripts, altered, bridge), { name: "AssertionError" }, target);
+  }
+});
+
 test("the CI job gates verification on a branch manifest and joins the merge gate", () => {
   const { jobs } = createRequire(import.meta.resolve("eslint"))("js-yaml").load(workflow);
   const root = mkdtempSync(join(tmpdir(), "manifest-workflow-guard-"));

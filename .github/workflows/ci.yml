@@ -49,13 +49,20 @@ concurrency:
 
 jobs:
   affected-tests:
-    name: Affected tests (fast)
+    name: Affected tests (fast, ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
-    # A full-suite change still runs all 124 PostgreSQL-gated files directly. Measured on
-    # 2026-10-04: 77 files in about 85 minutes, so about 140 minutes for the full set. 240
-    # leaves margin until the sharded lane replaces this single job.
-    timeout-minutes: 240
+    # Run 42384138047 spent 232 minutes in 141 completed files before cancellation.
+    # Eight isolated VMs stripe the final execution list; each file keeps its
+    # original command, environment, skip guard and 20-minute per-file budget.
+    # Budget/security: public standard runners; seven extra copies of setup,
+    # up to eight concurrent allocations, no new permissions or credentials.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
+      AFFECTED_TEST_SHARD: ${{ matrix.shard }}/8
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
@@ -75,6 +82,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prove selection admission and custody guards
+        if: ${{ matrix.shard == 1 }}
+        timeout-minutes: 12
+        run: pnpm run test:loop-selection-mutations
       - name: Calculate affected-test requirements
         id: selection
         env:
@@ -97,7 +108,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -217,7 +228,8 @@ jobs:
   mutation-checks-lineage:
     name: Mutation checks (lineage and attention)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 44 minutes of bounded proofs plus 6 minutes for setup and aggregation.
+    timeout-minutes: 50
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
     steps:
@@ -239,7 +251,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -253,7 +265,8 @@ jobs:
         continue-on-error: true
         run: pnpm run test:improve-control-room-loop-lineage-mutations
       - name: Prove authorized loop bridge guards
-        timeout-minutes: 10
+        # 900s measured parent + 60s runner cleanup + 60s step headroom.
+        timeout-minutes: 17
         run: pnpm run test:improve-control-room-loop-bridge-mutations
       - name: Prove saved loop website guards
         timeout-minutes: 5
@@ -291,7 +304,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -349,6 +362,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Provide the macOS /private/tmp path on Linux
+        # Protected updater mutation baselines require a real sticky directory.
+        # Production updater locking is macOS-only (lockf). Linux configuration
+        # fixtures use flock compatibility and do not prove that production spawn.
+        run: test -e /private/tmp || { sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp; }
       - name: Find this branch's mutation manifest
         id: manifest
         env:
@@ -378,7 +396,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -476,6 +494,9 @@ jobs:
       - name: Test the generic VPS front-door installer
         run: pnpm run test:front-door
       - name: Fail if any test file is unreachable from GitHub Actions
+        # REQUIRED external macOS qualification (exact product/tools pair):
+        # node scripts/check-loop-selection-host-gate.mjs
+        # Linux coverage checks the inventory and titles; it cannot qualify this gate.
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject stale or incomplete test quarantines
         run: node scripts/check-test-quarantine.mjs
@@ -584,17 +605,20 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    # Five shards balanced from the last ten successful hosted runs. Each has
-    # about 46 minutes of checks using each group's largest observed duration.
+    # The original five-shard forecast predates growth in the improvement lane.
+    # Run 41822589618 spent 12m39s in results, then at least 16m36s in improvement
+    # before shard 4's runner shutdown (well below this job's 90-minute limit).
+    # Give improvement its own shard; preserve every check and the existing bound.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        shard: ['1', '2', '3', '4', '5']
+        shard: ['1', '2', '3', '4', '5', '6']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install zsh for the install guide checks
         run: |
           sudo apt-get update
@@ -621,7 +645,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -662,12 +686,17 @@ jobs:
         if: ${{ !cancelled() && matrix.shard == '4' }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
-        run: node scripts/ci/run-scripts-keep-going.mjs test:project-activity-lifecycle-postgres test:updater:linux test:checkpoints test:server-composition test:ideas test:results test:articles test:workspaces test:night-kit:postgres test:fleet:lapse-stress test:improve-control-room test:r7cfix-harness test:pg-runtime test:install-database-phase:postgres test:text-copy-derivation:postgres test:perf-read-indexes
+        run: node scripts/ci/run-scripts-keep-going.mjs test:project-activity-lifecycle-postgres test:updater:linux test:checkpoints test:server-composition test:ideas test:results test:articles test:workspaces test:night-kit:postgres test:fleet:lapse-stress test:r7cfix-harness test:pg-runtime test:install-database-phase:postgres test:text-copy-derivation:postgres test:perf-read-indexes
       - name: Component lanes shard 5
         if: ${{ !cancelled() && matrix.shard == '5' }}
         env:
           PG_BIN: /usr/lib/postgresql/17/bin
         run: node scripts/ci/run-scripts-keep-going.mjs test:result-file-database-hardening-postgres test:project-activity test:recurring:postgres test:notices test:access test:owner-signing test:coordination test:voice test:observations test:backup-recovery test:owner-push:postgres test:postgres-production test:windows-launcher-modes test:improve-control-room-postgres test:result-file-download-postgres test:result-upload-store-postgres test:install-services-bringup:postgres test:fleet:lapse-terminal-race test:soak:analysis test:mac-upgrade
+      - name: Component lanes shard 6
+        if: ${{ !cancelled() && matrix.shard == '6' }}
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/ci/run-scripts-keep-going.mjs test:improve-control-room
       - name: Runtime-assembly memory guard
         if: ${{ !cancelled() && matrix.shard == '3' }}
         run: pnpm run test:private-local-runtime-assembly:memory-guard
@@ -934,7 +963,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -1062,7 +1091,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -1172,6 +1201,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -1203,7 +1233,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
           sudo install -d -m 0755 /etc/apt/keyrings
-          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           test -s /tmp/pgdg.asc
           head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
@@ -1220,12 +1250,14 @@ jobs:
         if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/check-test-lane-coverage.mjs
           node scripts/ci/run-scripts-keep-going.mjs test
       - name: Component lanes (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           status=0
+          node scripts/check-test-lane-coverage.mjs
           node scripts/ci/run-scripts-keep-going.mjs --expand test:components test:attack-kit || status=$?
           echo '::group::Resource-bound connector contracts'
           node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts || status=$?
@@ -1299,6 +1331,10 @@ jobs:
           }
           echo "Lane results:"
           check affected-tests "${{ needs.affected-tests.result }}"
+          # No routing exception: every affected-test shard must succeed.
+          if [ "${{ needs.affected-tests.result }}" != "success" ]; then
+            status=1
+          fi
           check route "${{ needs.route.result }}"
           check mutation-checks "${{ needs.mutation-checks.result }}"
           check pr-claims "${{ needs.pr-claims.result }}"

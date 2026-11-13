@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -309,9 +310,32 @@ test("the affected-test lane gives selected PostgreSQL tests a disposable, gated
   assert.match(job, /Stop disposable PostgreSQL for selected database tests/u);
 });
 
+test("component jobs retain history for immutable database upgrade fixtures", () => {
+  for (const name of ["test-components", "full-gate"]) {
+    const job = workflow.match(new RegExp(`^  ${name}:[\\s\\S]*?(?=^  [a-z][a-z-]+:|$(?![\\s\\S]))`, "mu"))?.[0];
+    assert.ok(job, `${name} must exist`);
+    const checkout = job.match(/      - uses: actions\/checkout[^]*?(?=      - )/u)?.[0];
+    assert.match(checkout, /fetch-depth: 0/u,
+      `${name} must supply the historical migration commits used by its upgrade tests`);
+  }
+});
+
+test("split mutation jobs prepare the protected macOS scratch directory", () => {
+  const job = workflow.match(/^  mutation-checks:[\s\S]*?(?=^  [a-z][a-z-]+:|$(?![\s\S]))/mu)?.[0];
+  assert.ok(job, "the finalization and website mutation job must exist");
+  const setup = job.indexOf("sudo mkdir -p /private/tmp && sudo chmod 1777 /private/tmp");
+  const checks = job.indexOf("run: pnpm run test:");
+  assert.ok(setup >= 0 && setup < checks,
+    "protected updater mutation baselines need a real sticky /private/tmp before checks run");
+});
+
 test("the affected-test automation has the required budget and security review", () => {
   assert.match(budgetSecurityReview, /## Amendment: affected tests \(fast\)/u);
-  assert.match(budgetSecurityReview, /45-minute timeout/u);
+  assert.match(budgetSecurityReview, /## Amendment: sharded affected tests/u);
+  assert.match(budgetSecurityReview, /120-minute timeout/u);
+  assert.match(budgetSecurityReview, /eight concurrent standard runners/u);
+  assert.match(budgetSecurityReview, /seven extra copies of setup/u);
+  assert.match(budgetSecurityReview, /both `pnpm build` and `pnpm run build:demo` in every nonempty leg under `ALL`/u);
   assert.match(budgetSecurityReview, /squawk-cli@2\.61\.0/u);
   assert.match(budgetSecurityReview, /fails if any non-exempt stream reports any skipped test/u);
   assert.match(budgetSecurityReview, /15-entry skipped-test exemption/u);
@@ -613,4 +637,34 @@ test("the decision is rendered in the shape the workflow consumes", () => {
   assert.match(rendered, /^quick=true$/mu);
   assert.match(rendered, /^full=(true|false)$/mu);
   assert.match(rendered, /^gate=/mu);
+});
+
+test("affected shards keep an unconditional eight-way matrix and isolated setup", () => {
+  const job = workflow.slice(workflow.indexOf("  affected-tests:"), workflow.indexOf("\n  route:"));
+  assert.match(job, /^    name: Affected tests \(fast, \$\{\{ matrix\.shard \}\}\/8\)$/mu);
+  const timeout = Number(job.match(/^    timeout-minutes: (\d+)$/mu)?.[1]);
+  assert.ok(timeout <= 240, "sharding must not raise the timeout");
+  assert.equal(timeout, 120, "each shard has the reviewed 120-minute timeout");
+  assert.match(job, /^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3, 4, 5, 6, 7, 8\]$/mu);
+  assert.match(job, /^      AFFECTED_TEST_SHARD: \$\{\{ matrix\.shard \}\}\/8$/mu);
+  assert.doesNotMatch(job, /^    (?:if|continue-on-error):/mu, "every shard is mandatory");
+  assert.doesNotMatch(job, /max-parallel:|exclude:|include:/u);
+  assert.match(job, /if: \$\{\{ always\(\) && steps\.selection\.outputs\.needs-pg == 'true' \}\}/u);
+  assert.match(job, /persist-credentials: false/u);
+  assert.match(job, /pnpm install --frozen-lockfile --ignore-scripts/u);
+});
+
+test("the merge gate accepts only a successful affected matrix result", () => {
+  const source = workflow.slice(workflow.indexOf("  merge-gate:"));
+  const gate = source.slice(source.indexOf("          set -euo pipefail"));
+  for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
+    const script = gate.replace(/\$\{\{ needs\.([a-z-]+)\.result \}\}/gu,
+      (_, name) => name === "affected-tests" ? result : "success");
+    assert.doesNotMatch(script, /\$\{\{/u);
+    const child = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000,
+      env: { ...process.env, COMPONENTS_ROUTED: "true" } });
+    assert.equal(child.error, undefined);
+    assert.equal(child.signal, null);
+    assert.equal(child.status, result === "success" ? 0 : 1, `affected matrix result=${result}: ${child.stdout}`);
+  }
 });

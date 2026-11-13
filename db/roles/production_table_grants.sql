@@ -205,3 +205,18 @@ REVOKE ALL ON control_loop_improvement_commands FROM control_room_application, c
 
 REVOKE ALL ON control_loop_update_candidates, control_loop_update_candidate_decisions FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker, control_room_work_intake, control_room_backup;
+
+REVOKE ALL ON control_loop_roster_models, control_loop_roster_state FROM control_room_application,
+  control_room_reader, control_room_schedule_admissions, control_room_github_broker, control_room_work_intake, control_room_backup;
+
+REVOKE ALL ON control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources, control_loop_policy_input_admissions, control_loop_policy_waivers
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake, control_room_backup;
+
+REVOKE ALL ON control_loop_providers, control_loop_provider_models, control_loop_provider_state
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake, control_room_backup;
+
+REVOKE ALL ON control_loop_provider_prices, control_loop_provider_fetches
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake, control_room_backup;

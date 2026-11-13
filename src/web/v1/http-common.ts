@@ -10,7 +10,7 @@ export function webFailure(error: unknown): Response {
   const code = error instanceof WebAccessError ? error.code : "service_unavailable";
   const status = { authentication_required: 401, access_denied: 403, invalid_request: 400,
     conflict: 409, queue_depth_exceeded: 409, flagged_items_unresolved: 409, not_found: 404,
-    service_unavailable: 503 }[code];
+    service_unavailable: 503, start_deferred_u81s: 503 }[code];
   return Response.json({ error: code }, { status, headers: privateResponseHeaders });
 }
 

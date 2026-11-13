@@ -13,11 +13,13 @@ import {
   isDocumentationOnly,
   NODE_TEST_TIMEOUT_MS,
   noTestsAffectedMessage,
+  parseTestShard,
   requestedBaseRef,
   requiresPostgres,
   runAffectedTests,
   runSelectedTests,
   selectionOutputs,
+  selectTestShard,
   shouldDeferToFullSuite,
   skippedTestExemptions,
 } from "../scripts/ci/affected-tests.mjs";
@@ -552,8 +554,10 @@ test("a package.json-only change is the everything path: it exits fast without e
     const selected = affectedTests(root, ["package.json"]);
     assert.equal(selected, "ALL");
     const tests = listTestFiles(root);
-    const status = runSelectedTests(selected, tests, root, (...arguments_) => { executed.push(arguments_); return 0; },
-      () => true, (...arguments_) => { executed.push(arguments_); return { status: 0, output: "" }; });
+    const status = runSelectedTests(selected, tests, root, {
+      execute: (...arguments_) => { executed.push(arguments_); return 0; }, postgresAvailable: () => true,
+      executeCapturingOutput: (...arguments_) => { executed.push(arguments_); return { status: 0, output: "" }; },
+    });
     assert.equal(status, 0);
     assert.deepEqual(executed, [], "the everything path must not execute any build or test command");
     assert.match(messages.join("\n"), /skipping direct execution/iu);
@@ -573,8 +577,8 @@ test("a single changed source file runs only its own affected tests, never the w
   try {
     const selected = affectedTests(root, ["src/leaf.ts"]);
     assert.deepEqual(selected, ["tests/transitive.test.ts"]);
-    const status = runSelectedTests(selected, selected, root, () => 0, () => true,
-      (command, arguments_) => { captured.push(arguments_); return { status: 0, output: "# skipped 0\n" }; });
+    const status = runSelectedTests(selected, selected, root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: (command, arguments_) => { captured.push(arguments_); return { status: 0, output: "# skipped 0\n" }; } });
     assert.equal(status, 0);
     assert.equal(captured.length, 1);
     assert.deepEqual(captured[0].filter(argument => argument.endsWith(".test.ts")), ["tests/transitive.test.ts"]);
@@ -613,8 +617,8 @@ test("an ALL deferral still runs the PostgreSQL-gated subset directly, since no 
   console.log = message => messages.push(message);
   try {
     const tests = listTestFiles(root);
-    const status = runSelectedTests("ALL", tests, root, () => 0, () => true,
-      (command, arguments_) => { captured.push(arguments_); return { status: 0, output: "# skipped 0\n" }; });
+    const status = runSelectedTests("ALL", tests, root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: (command, arguments_) => { captured.push(arguments_); return { status: 0, output: "# skipped 0\n" }; } });
     assert.equal(status, 0);
     assert.deepEqual(captured.flatMap(arguments_ => arguments_.filter(argument => argument.endsWith(".test.mjs"))),
       ["tests/postgres.test.mjs"], "the deferred bulk (tests/normal.test.mjs) must not re-run, but the " +
@@ -636,12 +640,13 @@ test("an env-gated PostgreSQL fixture cannot skip to a green result even when th
   delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
   try {
     const tests = listTestFiles(root);
-    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true, executePlainFixture), 1,
+    assert.equal(runSelectedTests("ALL", tests, root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: executePlainFixture }), 1,
       "a migration PR that defers to ALL must not get a green merge gate while the upgrade rehearsal " +
       "silently skips for want of its env var");
-    assert.equal(runSelectedTests("ALL", tests, root, () => 0, () => true,
-      (command, args, cwd, env) => executePlainFixture(command, args, cwd,
-        { ...env, CONTROL_ROOM_PG17_UPGRADE_REHEARSAL: "1" })), 0);
+    assert.equal(runSelectedTests("ALL", tests, root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: (command, args, cwd, env) => executePlainFixture(command, args, cwd,
+        { ...env, CONTROL_ROOM_PG17_UPGRADE_REHEARSAL: "1" }) }), 0);
   } finally {
     if (original === undefined) delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
     else process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL = original;
@@ -674,19 +679,312 @@ test("the Linux affected job defers exact macOS updater files even on the ALL Po
   try {
     for (const selected of [[mac], "ALL"]) {
       const calls = [];
-      assert.equal(runSelectedTests(selected, [mac], root, () => { throw new Error("must defer builds"); },
-        () => true, (...args) => { calls.push(args); return { status: 0, output: "" }; }, "linux"), 0);
+      assert.equal(runSelectedTests(selected, [mac], root, {
+        execute: () => { throw new Error("must defer builds"); }, postgresAvailable: () => true,
+        executeCapturingOutput: (...args) => { calls.push(args); return { status: 0, output: "" }; }, platform: "linux",
+      }), 0);
       assert.deepEqual(calls, []);
     }
     const calls = [];
-    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, () => 0, () => true,
-      (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "" }; }, "linux"), 0);
+    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: (_command, args) => { calls.push(args.at(-1)); return { status: 0, output: "" }; }, platform: "linux" }), 0);
     assert.deepEqual(calls, [linux], "Linux journal coverage must run directly");
-    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, () => 0, () => true,
-      () => ({ status: 1, output: "" }), "linux"), 1, "a retained Linux failure still fails the job");
+    assert.equal(runSelectedTests([mac, linux], [mac, linux], root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: () => ({ status: 1, output: "" }), platform: "linux" }), 1, "a retained Linux failure still fails the job");
     const macCalls = [];
-    assert.equal(runSelectedTests([mac], [mac], root, () => 0, () => true,
-      (_command, args) => { macCalls.push(args.at(-1)); return { status: 0, output: "" }; }, "darwin"), 0);
+    assert.equal(runSelectedTests([mac], [mac], root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: (_command, args) => { macCalls.push(args.at(-1)); return { status: 0, output: "" }; }, platform: "darwin" }), 0);
     assert.deepEqual(macCalls, [mac], "a Mac fast job may run the selected updater test directly");
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+import { b8ExternalHostInventoryV1,b8HostOnlyFileV1,b8MixedFileV1,b8P71SkipV1 } from '../scripts/check-test-lane-coverage.mjs';
+import { partitionB8ExternalHostV1 } from '../scripts/ci/affected-tests.mjs';
+
+test('B8 explicit external partition agrees in direct ALL PG metadata and argv paths',()=>{
+  const portable='tests/portable.test.ts',files=[b8HostOnlyFileV1,b8MixedFileV1,portable];
+  const root=fixture({[b8HostOnlyFileV1]:'requiresRealPostgres();',
+    [b8MixedFileV1]:'test("P71 real settings check",()=>{});\ntest("portable mixed case",()=>{});',
+    [portable]:'test("portable",()=>{});'});
+  const messages=[],calls=[],old=console.log;console.log=(...v)=>messages.push(v.join(' '));
+  try{
+    assert.deepEqual(partitionB8ExternalHostV1(files,files),{result:[b8MixedFileV1,portable],tests:[b8MixedFileV1,portable]});
+    for(const result of [files,'ALL']){
+      assert.equal(requiresPostgres(result,files,root),false);
+      const plan=affectedTestCommands(result,files,root);
+      assert.ok(plan.every(([,args])=>!args.includes(b8HostOnlyFileV1)));
+      const mixed=plan.find(([,args])=>args.includes(b8MixedFileV1));assert.ok(mixed);assert.equal(mixed[1].filter(a=>a===b8P71SkipV1).length,1);
+      assert.ok(mixed[1].indexOf(b8P71SkipV1)<mixed[1].indexOf(b8MixedFileV1));
+      assert.ok(!plan.find(([,args])=>args.includes(portable))[1].includes(b8P71SkipV1));
+      assert.equal(runAffectedTests(result,files,root,()=>0,()=>false,(_c,args)=>{calls.push(args);return {status:0,output:'# skipped 0\n'};}),0);
+    }
+    assert.ok(calls.every(args=>!args.includes(b8HostOnlyFileV1)));assert.equal(calls.length,4);
+    assert.equal(runAffectedTests([b8HostOnlyFileV1],[b8HostOnlyFileV1],root,()=>{assert.fail('no host preparations');},()=>{assert.fail('no host PG');}),0);
+    assert.deepEqual(affectedTestCommands('ALL',[b8HostOnlyFileV1],root),[]);
+    assert.equal(runSelectedTests('ALL',files,root,{execute:()=>0,postgresAvailable:()=>false,executeCapturingOutput:()=>{assert.fail('no portable full-suite duplication');},platform:'linux'}),0);
+    for(const entry of b8ExternalHostInventoryV1)assert.ok(messages.includes(`REQUIRED EXTERNAL HOST: ${entry}; gate=macOS; executed-in-linux=false`));
+    assert.ok(messages.some(l=>l.includes(b8P71SkipV1)));assert.ok(messages.some(l=>l.includes('exclusion=file')));
+  }finally{console.log=old;rmSync(root,{recursive:true,force:true});}
+});
+
+test('B8 mixed-file native exclusion still executes neighboring portable case and ordinary skips fail',()=>{
+  const root=fixture({[b8MixedFileV1]:`import test from 'node:test';\ntest('P71 real settings check',()=>{throw Error('host must not run');});\ntest('P71 real provider settings check',()=>{throw Error('provider host must not run');});\ntest('P72 real Start final policy admission',()=>{throw Error('Start host must not run');});\ntest('portable mixed case',()=>{});\n`});
+  try{
+    const plan=affectedTestCommands([b8MixedFileV1],[b8MixedFileV1],root);assert.equal(plan.length,1);
+    const [command,args]=plan[0],env={...process.env};delete env.NODE_TEST_CONTEXT;
+    const run=spawnSync(command,args.filter(a=>a!=='--import'&&a!=='tsx'),{cwd:root,env,encoding:'utf8',timeout:10000});
+    assert.equal(run.status,0,run.stdout+run.stderr);assert.match(run.stdout,/ok 1 - portable mixed case/);assert.doesNotMatch(run.stdout,/# Subtest: (?:P71 real (?:provider )?settings check|P72 real Start final policy admission)/);assert.match(run.stdout,/# tests 1/);
+    const result=runAffectedTests([b8MixedFileV1],[b8MixedFileV1],root,()=>0,()=>false,()=>({status:0,output:'# skipped 1\n'}));assert.equal(result,1);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test("snapshot port allocation is confined to its own PostgreSQL child", () => {
+  const snapshot = "tests/loop-selection-snapshot-postgres.test.ts";
+  const selection = "tests/loop-selection-postgres.test.ts";
+  const ordinary = "tests/normal.test.mjs";
+  const root = fixture({ [snapshot]: "const requiresRealPostgres = true;",
+    [selection]: "const requiresRealPostgres = true;", [ordinary]: "" });
+  const previous = process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+  try {
+    for (const assigned of [undefined, "60530"]) {
+      if (assigned === undefined) delete process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+      else process.env.CONTROL_ROOM_PG_TEST_PORT_BASE = assigned;
+      const observed = new Map();
+      assert.equal(runAffectedTests([ordinary, snapshot, selection], [ordinary, snapshot, selection], root,
+        () => 0, () => true, (_command, args, _cwd, environment) => {
+          observed.set(args.at(-1), environment.CONTROL_ROOM_PG_TEST_PORT_BASE);
+          return { status: 0, output: "# skipped 0\n" };
+        }), 0);
+      assert.equal(observed.get(snapshot), assigned ?? "59310", "snapshot gets an explicit range");
+      assert.equal(observed.get(selection), assigned, "U81 keeps its independent port allowlist/default");
+      assert.equal(observed.get(ordinary), assigned, "ordinary files inherit no new range");
+      assert.equal(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE, assigned, "child allocation cannot mutate the parent");
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+    else process.env.CONTROL_ROOM_PG_TEST_PORT_BASE = previous;
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("shard input fails closed and an unset shard preserves local execution", () => {
+  assert.equal(parseTestShard(undefined), undefined);
+  assert.deepEqual(parseTestShard("2/8"), { index: 2, count: 8 });
+  for (const value of ["", "0/8", "9/8", "1/0", "1", "1/8/9", "1.5/8", "01/8", "-1/8", "1/9007199254740992"])
+    assert.throws(() => parseTestShard(value), /AFFECTED_TEST_SHARD/u, value);
+  for (const shard of [{ index: 0, count: 8 }, { index: 9, count: 8 }, { index: 1, count: 0 },
+    { index: 1.5, count: 8 }, { index: 1, count: 2.5 }, { index: "1", count: 8 },
+    { index: 1, count: "8" }, { index: NaN, count: 8 }, { index: 1, count: Infinity },
+    { index: 1, count: 9007199254740992 }, { index: 9007199254740992, count: 9007199254740992 }])
+    assert.throws(() => selectTestShard(["a"], shard), /AFFECTED_TEST_SHARD/u);
+  const files = ["b", "a"];
+  assert.equal(selectTestShard(files, undefined), files);
+  assert.deepEqual(selectTestShard(files, { index: 1, count: 2 }), ["a"]);
+  assert.deepEqual(files, ["b", "a"], "partitioning must not mutate the source plan");
+});
+
+test("every selected file belongs to exactly one shard, including empty and uneven plans", () => {
+  for (const length of [0, 1, 7, 8, 9, 143, 953]) {
+    const files = Array.from({ length }, (_, index) => `tests/t${index}.test.mjs`);
+    const parts = Array.from({ length: 8 }, (_, index) => selectTestShard(files, { index: index + 1, count: 8 }));
+    assert.deepEqual(parts.flat().sort(), [...files].sort());
+    assert.equal(new Set(parts.flat()).size, length);
+    assert.ok(Math.max(...parts.map(part => part.length)) - Math.min(...parts.map(part => part.length)) <= 1);
+  }
+});
+
+test("the explicit mutation guard is excluded from shard execution but retained locally", () => {
+  const mutation = "tests/loop-selection-mutations.test.ts";
+  const names = [mutation, "tests/ordinary.test.mjs"];
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [];
+  const capture = (_command, args) => {
+    calls.push(args.at(-1));
+    return { status: 0, output: "# skipped 0\n" };
+  };
+  try {
+    for (let index = 1; index <= 8; index++)
+      assert.equal(runAffectedTests(names, names, root, () => 0, () => true, capture,
+        { index, count: 8 }), 0);
+    assert.deepEqual(calls, [names[1]]);
+    calls.length = 0;
+    assert.equal(runAffectedTests(names, names, root, () => 0, () => true, capture), 0);
+    assert.deepEqual(calls, names);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("sharding the final plan preserves commands and environments after bulk and macOS deferral", () => {
+  const files = Object.fromEntries(Array.from({ length: 210 }, (_, index) =>
+    [`tests/t${index}.test.mjs`, index % 2 === 0 ? "// requiresRealPostgres; dist-vps" : "// dist-contributor"]));
+  const mac = "tests/mac.test.mjs", exempt = "tests/automatic-claim-controller.test.mjs";
+  files[mac] = "// requiresRealPostgres";
+  files[exempt] = "// requiresRealPostgres";
+  files["package.json"] = JSON.stringify({ scripts: { "test:updater": `node --test ${mac}` } });
+  const root = fixture(files), tests = listTestFiles(root);
+  function plan(result, shard) {
+    const calls = [], builds = [];
+    assert.equal(runSelectedTests(result, result === "ALL" || result === "DOCS_ONLY" ? tests : result,
+      root, { execute: (command, args) => { builds.push([command, args]); return 0; }, postgresAvailable: () => true,
+        executeCapturingOutput: (command, args, _root, env) => { calls.push({ file: args.at(-1), command, args, env }); return { status: 0, output: "# skipped 0\n" }; },
+        platform: "linux", shard }), 0);
+    return { calls, builds };
+  }
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    for (const result of ["ALL", tests.slice(0, 140), [mac, exempt, "tests/t0.test.mjs", "tests/t1.test.mjs"], "DOCS_ONLY"]) {
+      const baseline = plan(result);
+      const shards = Array.from({ length: 8 }, (_, index) => plan(result, { index: index + 1, count: 8 }));
+      const calls = shards.flatMap(shard => shard.calls);
+      const byFile = calls => [...calls].sort((a, b) => a.file.localeCompare(b.file));
+      assert.deepEqual(byFile(calls), byFile(baseline.calls), "full commands and environments must match the unsharded execution plan");
+      assert.equal(new Set(calls.map(call => call.file)).size, baseline.calls.length);
+      for (const shard of shards) {
+        if (shard.calls.length === 0) assert.deepEqual(shard.builds, []);
+        else {
+          const files = shard.calls.map(call => call.file);
+          const commands = affectedTestCommands(files, files, root);
+          assert.deepEqual(shard.builds, commands.slice(0, commands.length - files.length),
+            "each nonempty shard must prepare the builds its own files read");
+        }
+      }
+      if (result === "ALL") {
+        assert.equal(calls.length, 105, "bulk deferral must happen before partitioning");
+        assert.ok(!calls.some(call => call.file === mac || call.file === exempt));
+      }
+    }
+  } finally { console.log = originalLog; rmSync(root, { recursive: true }); }
+});
+
+test("each shard retains real failure and unexempted-skip refusal while continuing later files", () => {
+  const names = ["a", "b", "c", "d", "e"].map(name => `tests/${name}.test.mjs`);
+  const root = fixture(Object.fromEntries(names.map(name => [name, ""])));
+  const calls = [];
+  try {
+    const status = runAffectedTests(names, names, root, () => 0, () => true, (_cmd, args) => {
+      const file = args.at(-1);
+      calls.push(file);
+      return { status: file === names[0] ? 9 : 0, output: file === names[2] ? "# skipped 1\n" : "# skipped 0\n" };
+    }, { index: 1, count: 2 });
+    assert.equal(status, 9);
+    assert.deepEqual(calls, [names[0], names[2], names[4]]);
+    assert.equal(runAffectedTests(names, names, root, () => 0, () => true,
+      () => ({ status: 0, output: "# skipped 1\n" }), { index: 2, count: 2 }), 1);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("B8 selection additions remain selectable across eight shards and migration fallback", () => {
+  const root = process.cwd();
+  const added = [
+    "tests/loop-selection-mutations.test.ts",
+    "tests/loop-selection-native.test.ts",
+    "tests/loop-selection-postgres.test.ts",
+    "tests/loop-selection-snapshot-mutations.test.ts",
+    "tests/loop-selection-snapshot-postgres.test.ts",
+    "tests/loop-selection-snapshot.test.ts",
+    "tests/loop-selection.test.ts",
+  ];
+  for (const file of added) assert.deepEqual(affectedTests(root, [file]), [file]);
+  for (const migration of [
+    "db/migrations/0316_control_loop_selection_acknowledgement.sql",
+    "db/migrations/0317_control_loop_selection_acknowledgement_validate.sql",
+    "db/down/0316_control_loop_selection_acknowledgement.sql",
+    "db/down/0317_control_loop_selection_acknowledgement_validate.sql",
+  ]) assert.equal(affectedTests(root, [migration]), "ALL");
+  const partition = partitionB8ExternalHostV1(added, added);
+  const combined = Array.from({ length: 8 }, (_, index) =>
+    selectTestShard(partition.tests, { index: index + 1, count: 8 })).flat();
+  assert.deepEqual(combined.sort(), added.filter(file => file !== b8HostOnlyFileV1
+    && file !== "tests/loop-selection-mutations.test.ts").sort());
+});
+
+test("the real repository's broad execution plan survives all eight shards unchanged", () => {
+  const root = process.cwd(), tests = listTestFiles(root);
+  const originalLog = console.log;
+  console.log = () => {};
+  const plan = shard => {
+    const calls = [];
+    assert.equal(runSelectedTests("ALL", tests, root, { execute: () => 0, postgresAvailable: () => true,
+      executeCapturingOutput: (command, args, _cwd, env) => { calls.push({ file: args.at(-1), command, args, env }); return { status: 0, output: "# skipped 0\n" }; },
+      platform: "linux", shard }), 0);
+    return calls;
+  };
+  try {
+    const baseline = plan(undefined);
+    const combined = Array.from({ length: 8 }, (_, index) => plan({ index: index + 1, count: 8 })).flat();
+    const sorted = calls => [...calls].sort((a, b) => a.file.localeCompare(b.file));
+    assert.ok(baseline.length > 100, "exercise the actual broad PostgreSQL workload");
+    assert.deepEqual(sorted(combined), sorted(baseline));
+    for (const file of ["tests/loop-selection-postgres.test.ts", "tests/loop-selection-snapshot-postgres.test.ts"])
+      assert.equal(combined.filter(call => call.file === file).length, 1, `${file} must run once`);
+    assert.ok(!combined.some(call => call.file === b8HostOnlyFileV1));
+    assert.equal(new Set(combined.map(call => call.file)).size, baseline.length);
+  } finally { console.log = originalLog; }
+});
+
+test("the CLI executes only a valid shard of the affected files in a fixture repository", () => {
+  const files = {
+    "src/shared.mjs": "export const value = 1;",
+    // Plain JavaScript fixtures need no loader; satisfy the production --import
+    // without depending on an installed tsx package in the quick-check lane.
+    "node_modules/tsx/package.json": '{"type":"module","exports":"./index.mjs"}',
+    "node_modules/tsx/index.mjs": "",
+  };
+  for (const name of ["a", "b", "c", "d"])
+    files[`tests/${name}.test.mjs`] = "import '../src/shared.mjs'; import test from 'node:test'; " +
+      "import { appendFileSync } from 'node:fs'; " +
+      `test('${name}', () => appendFileSync('executed.txt', '${name}\\n'));`;
+  const root = fixture(files);
+  const git = (...args) => {
+    const child = spawnSync("git", args, { cwd: root, encoding: "utf8", timeout: 5_000,
+      env: { ...process.env, GIT_AUTHOR_NAME: "CI fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+        GIT_COMMITTER_NAME: "CI fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" } });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 0, child.stderr);
+    return child.stdout.trim();
+  };
+  try {
+    git("init", "--quiet");
+    git("add", "src", "tests");
+    git("commit", "--quiet", "-m", "fixture baseline");
+    const base = git("rev-parse", "HEAD");
+    writeFileSync(join(root, "src/shared.mjs"), "export const value = 2;");
+    git("add", "src");
+    git("commit", "--quiet", "-m", "change shared source");
+    const script = fileURLToPath(new URL("../scripts/ci/affected-tests.mjs", import.meta.url));
+    const child = spawnSync(process.execPath, [script, "--run", base], { cwd: root,
+      encoding: "utf8", timeout: 10_000, env: { ...process.env, AFFECTED_TEST_SHARD: "1/2" } });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`);
+    assert.match(child.stdout, /Affected shard 1\/2: 2 of 4 execution file\(s\)/u);
+    assert.deepEqual(readFileSync(join(root, "executed.txt"), "utf8").trim().split("\n"), ["a", "c"]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("the CLI refuses an invalid shard before selection or execution", () => {
+  const script = fileURLToPath(new URL("../scripts/ci/affected-tests.mjs", import.meta.url));
+  const child = spawnSync(process.execPath, [script, "--run"], { encoding: "utf8", timeout: 5_000,
+    env: { ...process.env, AFFECTED_TEST_SHARD: "9/8" } });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /AFFECTED_TEST_SHARD requires 1 <= index <= count/u);
+  assert.doesNotMatch(child.stdout, /Running|Affected shard/u);
+});
+
+test("affected shards create scratch parents before executing files in a clean repository", () => {
+  const root = fixture({
+    "tests/scratch.test.mjs": `import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+test("allocates scratch without an earlier file", () => {
+  const directory = mkdtempSync(join(process.cwd(), ".test-tmp", "isolated-"));
+  rmSync(directory, { recursive: true });
+});`,
+  });
+  try {
+    assert.equal(existsSync(join(root, ".test-tmp")), false);
+    assert.equal(runAffectedTests(["tests/scratch.test.mjs"], ["tests/scratch.test.mjs"], root,
+      undefined, undefined, executePlainFixture, { index: 1, count: 8 }), 0);
+    assert.equal(existsSync(join(root, ".test-tmp")), true);
   } finally { rmSync(root, { recursive: true }); }
 });

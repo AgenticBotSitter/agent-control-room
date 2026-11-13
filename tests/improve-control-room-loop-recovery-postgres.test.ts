@@ -5,7 +5,7 @@ import { spawn,execFile,type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { withRealPostgres,requiresRealPostgres } from './support/attack-kit/index';
-import { syntheticRecoveryEngine,syntheticRecoveryCapability,seedRecoveryRun,seedRecoveryPostgres,pgRecoveryIdentity,pgRecoveryScope,pgRecoveryProject,pgRecoveryOwner,recoveryPgWeb,recoveryKey,resultCrashDatabase } from './helpers/improve-control-room-loop-recovery';
+import { s4ProviderServiceV1,syntheticRecoveryEngine,syntheticRecoveryCapability,seedRecoveryRun,seedRecoveryPostgres,pgRecoveryIdentity,pgRecoveryScope,pgRecoveryProject,pgRecoveryOwner,recoveryPgWeb,recoveryKey,resultCrashDatabase } from './helpers/improve-control-room-loop-recovery';
 import { createImproveControlRoomLoopAdapterV1 } from '../src/web/v1/improve-control-room-loop-adapter';
 import { ImproveControlRoomLoopServiceV1 } from '../src/web/v1/improve-control-room-loop-service';
 import { sha256Digest } from '../src/security';
@@ -63,7 +63,7 @@ test('B3a production login admission journal receipts and pending exact retries'
     identity={...identity,tokenDigest:sha256Digest('SYNTHETIC B3a new authenticated session')};
     const replayedIntakeRoots:string[]=[];
     for(const operation of ['intake','confirm'] as const){
-      const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(owner.client,operation),pgRecoveryScope,{integrityKey:recoveryKey,adapter:e.adapter});
+      const crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(owner.client,operation),pgRecoveryScope,{providers:s4ProviderServiceV1(owner.client,pgRecoveryScope),integrityKey:recoveryKey,adapter:e.adapter});
       const intakeBody={description:'SYNTHETIC pending '+operation};
       const draft=await(operation==='intake'?crash:owner.bridge).mutate(identity,pgRecoveryProject,null,'intake',intakeBody,`b3a-pg-${operation}-intake`);
       let body:unknown=intakeBody;
@@ -92,7 +92,7 @@ test('B3a production login admission journal receipts and pending exact retries'
         const question={questionId:'question:pg-retained',inputVersion:1,reportSha256:'c'.repeat(64),owner:true,changesInput:false};await e.edit(decision.run,{state:'waiting',question});
         body={expectedVersion:1,expectedRevision:status.revision,questionId:question.questionId,inputVersion:1,questionReportSha256:question.reportSha256,text:'Use the saved authorized answer.'};
       }
-      const key=`b3a-pg-${operation}-lost-result`,crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(owner.client,operation),pgRecoveryScope,{integrityKey:recoveryKey,adapter:e.adapter});
+      const key=`b3a-pg-${operation}-lost-result`,crash=new ImproveControlRoomLoopServiceV1(resultCrashDatabase(owner.client,operation),pgRecoveryScope,{providers:s4ProviderServiceV1(owner.client,pgRecoveryScope),integrityKey:recoveryKey,adapter:e.adapter});
       const lost=await crash.mutate(identity,pgRecoveryProject,decision.id,operation,body,key);assert.equal(lost.state,'uncertain');
       const decisionTarget={projectId:pgRecoveryProject,requestId:decision.id,ownerIdentityId:pgRecoveryOwner};
       await Promise.allSettled([web.bridge.recoveryPort().reconcile(decisionTarget,signal()),owner.bridge.mutate(identity,pgRecoveryProject,decision.id,operation,body,key)]);

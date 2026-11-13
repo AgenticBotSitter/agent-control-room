@@ -16,6 +16,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_private_web;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION control_loop_selection_ack_timestamp_v1(text) TO control_room_private_web;
 -- Lead-approved read-only schedule presentation; no occurrence or schedule mutation.
 GRANT SELECT ON control_schedules, control_schedule_occurrences TO control_room_private_web;
 GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web_sessions,
@@ -309,5 +310,32 @@ GRANT SELECT, INSERT ON control_loop_improvement_requests, control_loop_improvem
 GRANT SELECT, INSERT ON control_loop_improvement_commands TO control_room_private_web;
 
 GRANT SELECT, INSERT ON control_loop_update_candidates, control_loop_update_candidate_decisions TO control_room_private_web;
+
+-- 0305: the B6 roster master. Rows are edited in place (no delete; retire with on_off='off');
+-- the state row carries the version, the export marker and the last command replay key.
+GRANT SELECT, INSERT ON control_loop_roster_models, control_loop_roster_state TO control_room_private_web;
+GRANT UPDATE (launcher, provider, family, model_class, roles, efforts, default_effort, cost, on_off, note, nick,
+  max_build_grade, updated_by, updated_at) ON control_loop_roster_models TO control_room_private_web;
+GRANT UPDATE (version, exported_version, exported_sha256, last_idempotency_key, last_request_digest, updated_at)
+  ON control_loop_roster_state TO control_room_private_web;
+
+-- P71: policy copies and audit are append only; only the two layer heads change.
+GRANT SELECT, INSERT ON control_loop_policy_layers, control_loop_policy_events, control_loop_policy_input_sources, control_loop_policy_input_admissions TO control_room_private_web;
+GRANT UPDATE (version, settings_text, settings_sha256, updated_by, updated_at, last_idempotency_key, last_request_digest, locked_paths)
+  ON control_loop_policy_layers TO control_room_private_web;
+
+-- S1 owner-managed provider routes, never credential values.
+GRANT SELECT, INSERT ON control_loop_providers, control_loop_provider_models, control_loop_provider_state TO control_room_private_web;
+GRANT UPDATE (display_name,base_url,billing_kind,secret_ref,price_source_url,price_source_format,credit_amount_nano_usd,credit_expires_on,credit_note,updated_by,updated_at) ON control_loop_providers TO control_room_private_web;
+GRANT UPDATE (version,last_idempotency_key,last_request_digest,updated_at) ON control_loop_provider_state TO control_room_private_web;
+GRANT DELETE ON control_loop_providers,control_loop_provider_models TO control_room_private_web;
+
+-- S2 observations replace rows; only fetch outcome columns are mutable.
+GRANT SELECT, INSERT, DELETE ON control_loop_provider_prices, control_loop_provider_fetches TO control_room_private_web;
+GRANT UPDATE (outcome,reason,fetched_at) ON control_loop_provider_fetches TO control_room_private_web;
+
+-- P72 waiver lifecycle has exactly two nullable transitions.
+GRANT SELECT, INSERT ON control_loop_policy_waivers TO control_room_private_web;
+GRANT UPDATE (revoked_at,consumed_by_request_id) ON control_loop_policy_waivers TO control_room_private_web;
 
 COMMIT;

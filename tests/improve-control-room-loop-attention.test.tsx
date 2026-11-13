@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from "node:assert/strict";
 import { Buffer as NodeBuffer } from "node:buffer";
 import test from "node:test";
@@ -70,10 +71,10 @@ test("B2b browser schemas preserve UTF-8 byte limits without Buffer", () => {
     }
   }
 });
-const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC B2b"}';
+const settingsText = JSON.stringify({project:{host_adapter:'local-loop'},fixture:'SYNTHETIC B2b',providerRoute:S4_FIXTURE_ROUTE});
 const exact = "  Draft with café 🧭\r\nKeep every byte.  ";
 async function fixture(intakeRefused = false) {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B2b" });
@@ -106,13 +107,15 @@ async function fixture(intakeRefused = false) {
     override !== undefined ? override : ["stopped","finished"].includes(saved.state) ? null : saved.question ? {kind:"question",text:"Choose the saved scope.\r\nKeep café?"}
       : saved.approval ? {kind:"approve"} : !saved.confirmation ? {kind:"confirm"} : null } });
   let documentText = "Sealed complete plan.\n".repeat(4000), documentCalls = 0;
-  const adapter: LoopAdapterV1 = { adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
+  const adapter: LoopAdapterV1 = {providerRoutes:s4FixtureRoutes, adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
+    // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
+    checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     available:()=>true,reserveRun:()=>`synthetic-run:${++sequence}`,
     intake:(id,b,text)=>complete("intake",id,b,text),confirmRequest:(id,b)=>complete("confirm",id,b),start:(id,b)=>complete("start",id,b),stop:(id,b)=>complete("stop",id,b),
     approve:(id,b)=>complete("approve",id,b),answer:(id,b,text)=>complete("answer",id,b,text),status:async()=>snapshot(),
     readApprovalDocument:async()=>{documentCalls++;return documentText;},close:async()=>{} };
   const desk = new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,contract);
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
   const handler = createImproveControlRoomHttpHandlerV1({origin,trust,service:desk,loopBridge:bridge,clock:()=>now});
   const posts: {path:string;body:string;key:string}[] = [];
   const transport: typeof fetch = async (input, options) => {
@@ -384,7 +387,7 @@ test("B2b discovery creator predicate",async()=>{
 
 test("B2b Stop synchronously invalidates a waiting answer",async()=>{
   const f=await fixture(),id=await f.intake();await f.confirm(id);const saved=await f.bridge.status(f.identity,f.project.projectId,id);
-  await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{expectedVersion:1,expectedRevision:saved.engine.revision,runLinkId:saved.display.runLinkId},"b2b-start-before-stop-0001");
+  await f.bridge.mutate(f.identity,f.project.projectId,id,"start",{route:S4_FIXTURE_ROUTE,expectedVersion:1,expectedRevision:saved.engine.revision,runLinkId:saved.display.runLinkId},"b2b-start-before-stop-0001");
   f.edit({state:"waiting",question});const m=await mount(f.project.projectId,f.transport);
   try{
     await settle();const field=m.dom.window.document.querySelector("#loop-owner-answer")!;

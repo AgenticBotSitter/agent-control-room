@@ -1,0 +1,8 @@
+-- Validate acknowledgement and admission provenance.
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+ALTER TABLE control_loop_improvement_commands VALIDATE CONSTRAINT control_loop_improvement_commands_binding_check;
+ALTER TABLE control_loop_improvement_commands VALIDATE CONSTRAINT control_loop_improvement_commands_check1;
+
+ALTER TABLE control_loop_policy_input_admissions VALIDATE CONSTRAINT control_loop_policy_input_admissions_source_fk;
+ALTER TABLE control_loop_policy_input_sources VALIDATE CONSTRAINT control_loop_policy_input_sources_admission_fk;

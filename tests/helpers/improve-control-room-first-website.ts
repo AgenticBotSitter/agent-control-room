@@ -1,3 +1,4 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture, seedS4ProviderV1 } from './improve-control-room-loop-recovery';
 // B5 first website proof: strict real-proof configuration, preflight, the
 // disposable proof-site fixture, the independently executed diagnostic and the
 // retained-evidence verifier. Imports are inert: nothing here opens a listener,
@@ -1198,6 +1199,7 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
  * is that the real client only reads while saved state moves. Its PASS is not real B5. */
 export async function syntheticFirstWebsiteEngineV1(input: { client: import("../../src/persistence/database").DatabaseClient;
   scope: { tenantId: string; workspaceId: string }; projectId: string; clock: () => number; heads?: { base: string; rejected: string; final: string } }) {
+  await seedS4ProviderV1(input.client,input.scope);
   const { ImproveControlRoomDeskServiceV1 } = await import("../../src/improve-control-room/v1/service");
   const { ImproveControlRoomLoopServiceV1 } = await import("../../src/web/v1/improve-control-room-loop-service");
   const { LoopCandidatePublisherV1, LoopCandidateStaleCompletionV1 } = await import("../../src/improve-control-room/v1/loop-candidate-publisher");
@@ -1210,7 +1212,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
   const { scope, clock } = input, now = clock(), f = { client: input.client, project: { projectId: input.projectId } };
   const KEY = new Uint8Array(32).fill(64);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B5 tooling" }), schemaDigest = sha256Digest({ fixture: "SYNTHETIC B5 schema" });
-  const settingsText = JSON.stringify({ fixture: "SYNTHETIC B5", project: { risk_categories: B5_REQUIRED_RISK.categories, test_checks: B5_RECIPES } });
+  const settingsText = JSON.stringify({ fixture: "SYNTHETIC B5", providerRoute:S4_FIXTURE_ROUTE, project: { risk_categories: B5_REQUIRED_RISK.categories, test_checks: B5_RECIPES } });
   const contract = { toolingRevision, decodeRunIdentity: (v: unknown) => loopImprovementRunIdentitySchemaV1.parse(v),
     decodeObservation: (v: unknown) => loopImprovementObservationSchemaV1.parse(v),
     matchesSavedInput: (_r: unknown, o: { settingsDigest: string; confirmation: { sha256: string } }, i: { description: string; settingsText: string }) =>
@@ -1240,7 +1242,9 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
     saved!.receipts.push({ commandId: id, bindingDigest: sha256Digest(b), state: "accepted", error: null, evidenceDigest: sha256Digest({ op, id }) });
     return snapshot();
   };
-  const adapter: Adapter = { adapterId: "adapter:synthetic-b5", toolingRevision, schemaDigest, settingsText, contract,
+  const adapter: Adapter = { providerRoutes:s4FixtureRoutes, adapterId: "adapter:synthetic-b5", toolingRevision, schemaDigest, settingsText, contract,
+    // SYNTHETIC checker accepts only this consumer fixture's fixed defaults.
+    checkSettings:async text=>{if(text!==settingsText)throw new Error("SYNTHETIC unexpected settings");return{eligible:true,reasons:[]};},
     available: () => true, reserveRun: () => `synthetic-run:b5-${++sequence}`,
     intake: (id, b, text) => command("intake", id, b, text), confirmRequest: (id, b) => command("confirm", id, b), start: (id, b) => command("start", id, b),
     stop: (id, b) => command("stop", id, b), approve: (id, b) => command("approve", id, b), answer: (id, b, text) => command("answer", id, b, text),
@@ -1278,7 +1282,7 @@ export async function syntheticFirstWebsiteEngineV1(input: { client: import("../
   const config = { integrityKey: KEY, contract, schemaDigest, source, repository };
   const desk = new ImproveControlRoomDeskServiceV1(f.client, scope, KEY, undefined, clock, contract, config);
   const publisher = new LoopCandidatePublisherV1(desk, config);
-  const openBridge = () => new ImproveControlRoomLoopServiceV1(f.client, scope, { integrityKey: KEY, adapter, loopCandidates: config }, clock);
+  const openBridge = () => new ImproveControlRoomLoopServiceV1(f.client, scope, {providers:s4ProviderServiceV1(f.client,scope,clock), integrityKey: KEY, adapter, loopCandidates: config }, clock);
   const step = (role: string, head: string, verdict: string | null) => { launches++; steps.push({ n: steps.length + 1, role, head, verdict }); };
   /** One fixture progress step, called by the test. It advances saved engine state only when the run is not waiting on the owner. */
   const tick = async () => {
@@ -1311,7 +1315,7 @@ export async function driveSyntheticFirstWebsiteV1(e: Awaited<ReturnType<typeof 
   await bridge.mutate(identity, projectId, requestId, "confirm", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
     requestSha256: s.engine.requestSha256, settingsSha256: s.engine.settingsSha256 }, `${prefix}-confirm-0001`);
   s = await current();
-  await bridge.mutate(identity, projectId, requestId, "start", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, `${prefix}-start-0001`);
+  await bridge.mutate(identity, projectId, requestId, "start", {route:S4_FIXTURE_ROUTE, expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision, runLinkId }, `${prefix}-start-0001`);
   await e.tick(); s = await current();
   await bridge.mutate(identity, projectId, requestId, "answer", { expectedVersion: s.request.currentVersion, expectedRevision: s.engine.revision,
     questionId: e.question.questionId, inputVersion: e.question.inputVersion, questionReportSha256: e.question.reportSha256, text: "Amber." }, `${prefix}-answer-0001`);
@@ -1329,18 +1333,38 @@ export async function syntheticFirstWebsiteFixtureV1(options: { dataDir?: string
   const { now, origin, trust } = await import("./web-foundation");
   const { createPrivateWebProcess } = await import("../../src/web/v1/private-process");
   const f = options.dataDir ? await taskFixtureOnDisk(options.dataDir) : await taskFixture();
+  // The composed HTTP host enables provider validation through the B6 roster
+  // capability. Seed and export this fixture's one synthetic model through the
+  // real service, so browser requests exercise the same composition as Start.
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { LoopRosterServiceV1 } = await import("../../src/web/v1/loop-roster-service");
+  const { renderLoopRosterV1 } = await import("../../src/web/v1/loop-roster-render");
+  await mkdir(resolve(".test-tmp"), { recursive: true });
+  const rosterRoot = await mkdtemp(resolve(".test-tmp/b5-roster-"));
+  const rosterText = renderLoopRosterV1([{ name:"fixture-model", launcher:"codex", provider:"fixture", family:"fixture",
+    class:"frontier", roles:"build", efforts:"high", default_effort:"high", cost:"sub", on:"on", note:"", nick:"", max_build_grade:"" }]);
+  const roster = { rosterRoot, toolsSeed:join(rosterRoot,"models.tsv"), check:async(file:string)=>{
+    if (await readFile(file,"utf8") !== rosterText) throw new Error("SYNTHETIC unexpected roster");
+    return { exitCode:0, lines:[] };
+  } };
+  await writeFile(roster.toolsSeed, rosterText, { mode:0o600 });
+  try {
+    const result = await new LoopRosterServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},roster,()=>now).start();
+    if (!result.seeded || !result.exported) throw new Error("SYNTHETIC roster export unavailable");
+  } catch (error) { await f.db.close(); await rm(rosterRoot,{recursive:true,force:true}); throw error; }
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };
   const e = await syntheticFirstWebsiteEngineV1({ client: f.client, scope, projectId: f.project.projectId, clock: () => now, heads: options.heads });
   const open = () => ({ bridge: e.openBridge(), app: createPrivateWebProcess({ origin, ...trust, ...scope, loadKeys: async () => trust.keys, clock: () => now,
-    database: { client: f.client, close: async () => {} }, loopBridge: { integrityKey: e.KEY, adapter: e.adapter, loopCandidates: e.config } }) });
+    database: { client: f.client, close: async () => {} }, loopBridge: { integrityKey: e.KEY, adapter: { ...e.adapter, roster }, loopCandidates: e.config } }) });
   let service = open(), restarts = 0;
   return { ...f, ...e, get bridge() { return service.bridge; }, get app() { return service.app; },
     handle: (r: Request) => service.app.handle(r, () => new Response("unused", { status: 404 })), restarts: () => restarts,
     /** Restart only this owned service host; the database and saved engine state remain. */
     restart: async () => { await service.app.close(); await service.bridge.close(); service = open(); restarts++; },
-    close: async () => { await service.app.close(); await service.bridge.close(); await f.db.close(); } };
+    close: async () => { try { await service.app.close(); await service.bridge.close(); await f.db.close(); }
+      finally { await rm(rosterRoot,{recursive:true,force:true}); } } };
 }
 
 /** Re-hashes the private assembly module immediately before import and requires the

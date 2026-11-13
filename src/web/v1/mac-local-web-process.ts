@@ -1,5 +1,15 @@
+import { LoopSelectionSnapshotCoordinatorV1, withLoopSelectionSourceTransactionsV1 } from "./loop-selection-snapshot";
+import { readLoopRosterSnapshotSourceV1 } from "./loop-roster-service";
+import { LoopSelectionServiceV1 } from "./loop-selection-service";
+import { createLoopSelectionHttpHandlerV1, isLoopSelectionRouteV1 } from "./loop-selection-http";
+import { LoopProviderServiceV1 } from "./loop-provider-service";
+import { createLoopProviderHttpHandlerV1, isLoopProviderRouteV1 } from "./loop-provider-http";
+import { LoopPolicyServiceV1 } from "./loop-policy-service";
+import { createLoopPolicyHttpHandlerV1, isLoopPolicyRouteV1 } from "./loop-policy-http";
 import { resolveLoopCandidateConfigurationV1, type LoopCandidateConfigurationV1 } from "../../improve-control-room/v1/loop-candidate-publisher";
 import { createLoopCandidateHttpHandlerV1, isLoopCandidateRouteV1 } from "./improve-control-room-loop-candidate-http";
+import { LoopRosterServiceV1 } from "./loop-roster-service";
+import { createLoopRosterHttpHandlerV1, isLoopRosterRouteV1 } from "./loop-roster-http";
 import { ImproveControlRoomLoopServiceV1, loopKeyMatchesLegacyKeyV1, type LoopBridgeConfigurationV1 } from "./improve-control-room-loop-service";
 import { ownerPushLinkV1 } from "../../web-push/v1/policy";
 import { localOwnerSignInTargetV1 } from "./local-owner-session";
@@ -321,12 +331,42 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const loopCandidateDesk = candidateConfiguration ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, candidateConfiguration.integrityKey, undefined, clock,
     candidateConfiguration.contract, candidateConfiguration) : undefined;
-  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge, clock) : undefined;
+  const loopSourceFiles = options.loopBridge?.adapter.selectionSources;
+  const loopDatabase = loopSourceFiles ? withLoopSelectionSourceTransactionsV1(options.database.client, loopSourceFiles) : options.database.client;
+  const loopSources = loopSourceFiles ? new LoopSelectionSnapshotCoordinatorV1({ db: loopDatabase,
+    tenantId: profile.tenantId, workspaceId: options.workspaceId, sourceFiles: loopSourceFiles,
+    readRoster: readLoopRosterSnapshotSourceV1, clock: { wallNow: clock, monotonicNow: () => performance.now() } }) : undefined;
+  const loopProviders = options.loopBridge?.adapter.roster ? new LoopProviderServiceV1(loopDatabase,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, undefined, clock) : undefined;
+  const loopPolicy = options.loopBridge ? new LoopPolicyServiceV1(loopDatabase,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.loopBridge.adapter, clock, loopProviders) : undefined;
+  let loopSelectionReady = false;
+  const loopBridge = options.loopBridge ? new ImproveControlRoomLoopServiceV1(loopDatabase,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, { ...options.loopBridge, policy: loopPolicy, providers: loopProviders, selectionGuard: loopSources, selectionReady: () => loopSelectionReady }, clock) : undefined;
   const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
   const loopCandidateHttp = loopCandidateDesk ? createLoopCandidateHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: loopCandidateDesk, clock }) : undefined;
+  // B6: the roster master and its export, from the same pinned adapter. Start seeds or reconciles once.
+  const loopRosterTools = options.loopBridge?.adapter.roster;
+  const loopRoster = loopRosterTools ? new LoopRosterServiceV1(loopDatabase,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, loopRosterTools, clock, {}, loopSources) : undefined;
+  const loopRosterStarted = (async () => {
+    await loopSources?.start();
+    const result = await loopRoster?.start();
+    if (loopSources && (!result?.seeded || !result.exported)) throw new Error("selection_source_unavailable");
+    if (loopSources) { await loopSources.capture(); loopSelectionReady = true; }
+    return result;
+  })().catch(() => undefined);
+  const loopSelection = loopPolicy && loopSources ? new LoopSelectionServiceV1(loopDatabase,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, loopPolicy, {
+      async capture() { if (!await loopRosterStarted) throw new Error("selection_source_unavailable"); return loopSources.capture(); },
+      assertCurrent: loopSources.assertCurrent.bind(loopSources),
+    }, clock) : undefined;
+  const loopRosterHttp = loopRoster ? createLoopRosterHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: loopRoster, clock }) : undefined;
+  const loopPolicyHttp = loopPolicy ? createLoopPolicyHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: loopPolicy, clock }) : undefined;
   const improvementHttp = improvementDesk || loopBridge ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: improvementDesk, loopBridge, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
@@ -864,6 +904,24 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (operationsModeHttp && url.pathname === "/api/v1/operations-mode") return operationsModeHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (isLoopSelectionRouteV1(url.pathname)) {
+        if (!loopSelection) throw new WebAccessError("not_found");
+        return createLoopSelectionHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, service: loopSelection, clock })(request);
+      }
+      if (isLoopPolicyRouteV1(url.pathname)) {
+        if (!loopPolicyHttp) throw new WebAccessError("not_found");
+        return loopPolicyHttp(request);
+      }
+      if (isLoopProviderRouteV1(url.pathname)) {
+        if (!loopProviders) throw new WebAccessError("not_found");
+        await loopRosterStarted;
+        return createLoopProviderHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, service: loopProviders, clock })(request);
+      }
+      if (isLoopRosterRouteV1(url.pathname)) {
+        if (!loopRosterHttp) throw new WebAccessError("not_found");
+        await loopRosterStarted;
+        return loopRosterHttp(request);
+      }
       if (isLoopCandidateRouteV1(url.pathname)) {
         if (!loopCandidateHttp) throw new WebAccessError("not_found");
         return loopCandidateHttp(request);
@@ -902,5 +960,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   // is the failure this whole branch is about.
   return Object.freeze({ handle,
     isReady: () => closed === undefined && options.database.isAvailable(),
-    close: () => closed ??= (async () => { await loopBridge?.close(); await options.database.close(); })() });
+    close: () => closed ??= (async () => { await loopRosterStarted; await loopBridge?.close(); await options.database.close(); })() });
 }

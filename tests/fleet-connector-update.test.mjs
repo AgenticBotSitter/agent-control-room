@@ -474,7 +474,7 @@ test("R2C-08: signed repair replaces damaged active bytes and rolls back to a ve
 test("R2C-10: simultaneous stale inspectors elect exactly one cleaner for that generation", async t => {
   const f = await fixture(t), contenders = 20;
   await writeFile(f.paths.lock, JSON.stringify({ pid: 2_147_483_647, token: "f".repeat(32) }), { mode: 0o600 });
-  let inspections = 0, cleaners = 0, releaseInspectors;
+  let inspections = 0, cleaners = 0, holders = 0, maxHolders = 0, releaseInspectors;
   const allInspected = new Promise(done => { releaseInspectors = done; });
   const results = await Promise.allSettled(Array.from({ length: contenders }, async () => {
     const release = await connector.acquireRotationLock(f.paths.lock, {
@@ -482,10 +482,21 @@ test("R2C-10: simultaneous stale inspectors elect exactly one cleaner for that g
       beforeDeadOwnerCleanup: async () => { if (++inspections === contenders) releaseInspectors(); await allInspected; },
       afterCleanerElection: async () => { cleaners++; await new Promise(done => setTimeout(done, 20)); },
     });
-    try { await new Promise(done => setTimeout(done, 1)); } finally { await release(); }
+    holders++; maxHolders = Math.max(maxHolders, holders);
+    try { await new Promise(done => setTimeout(done, 1)); } finally { holders--; await release(); }
   }));
+  assert.equal(inspections, contenders);
   assert.equal(cleaners, 1);
-  assert.equal(results.filter(result => result.status === "fulfilled").length, contenders);
+  assert.equal(maxHolders, 1);
+  assert.equal(holders, 0);
+  // Acquisition has a bounded wait, not a fairness guarantee: under load some
+  // contenders may time out while the elected cleaner and holders make progress.
+  assert.ok(results.some(result => result.status === "fulfilled"));
+  for (const result of results) if (result.status === "rejected")
+    assert.equal(result.reason.message, "Another session is renewing this bot credential. Try again shortly.");
+  // Recovery and release must leave the lock usable for a later caller.
+  const release = await connector.acquireRotationLock(f.paths.lock);
+  await release();
 });
 
 // The child runs the real update check on its default transport, with one

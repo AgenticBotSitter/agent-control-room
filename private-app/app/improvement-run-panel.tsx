@@ -1,5 +1,6 @@
 "use client";
 
+import { LoopProviderSelection } from "./loop-provider-choice";
 import { useEffect, useRef, useState } from "react";
 import type { LoopImprovementRequestViewV1, LoopImprovementStatusV1 } from "../../src/improve-control-room/v1/schemas";
 import { clearsLoopAuthority, loopImprovementBrowserClient as client, LoopReadError,
@@ -48,6 +49,7 @@ export function ImprovementRunPanel({ projectId, requests, fresh, refreshDesk }:
   const selected = selection === undefined ? requests[0] : requests.find(row => row.requestId === selection);
   return <section className="private-panel" aria-label="Saved loop work" style={{ overflowWrap: "anywhere", minWidth: 0 }}>
     <h2>Saved loop work</h2>
+    <LoopProviderSelection key={projectId} projectId={projectId} enabled={fresh} />
     {requests.length ? <ul className="private-dashboard-list">{requests.map(row => <li key={row.requestId}>
       <a href={`/projects/${encodeURIComponent(projectId)}/improvements#request=${encodeURIComponent(row.requestId)}`}
         onClick={() => setSelection(row.requestId)}>{row.description}</a>
@@ -69,6 +71,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
   const actions = useRef<{ start?: FrozenLoopAction; stop?: FrozenLoopAction }>({});
   const latch = useRef({ start: false, stop: false });
   const [pending, setPending] = useState({ start: false, stop: false });
+  const [paidOptIn,setPaidOptIn]=useState(false),[paidCap,setPaidCap]=useState("");
   const [notices, setNotices] = useState<{ start?: string; stop?: string }>({});
   const [retry, setRetry] = useState({ start: false, stop: false });
   const mounted = useRef(true);
@@ -105,6 +108,7 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
   const current = read.value;
   const statusFresh = fresh && !!current && !read.loading && !read.checking && !read.error && matches(row, current);
   const canStart = statusFresh && current.canStart && current.confirmationCurrent && current.startState === "not_started"
+    && !!current.providerRoute && (!paidOptIn || /^[1-9][0-9]{0,29}$/.test(paidCap))
     && !actions.current.start && !pending.start && !pending.stop;
   const startGate = () => verifiedRead.current && canStart;
   const snapshot = current ?? safe;
@@ -118,7 +122,8 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       if (operation === "start" ? !startGate() : !stopTarget || !!actions.current.stop) return;
       actions.current[operation] = Object.freeze({ key: `loop-${operation}:${crypto.randomUUID()}`,
         body: JSON.stringify(operation === "start" ? { expectedVersion: row.currentVersion, runLinkId: row.runLink.runLinkId,
-          expectedRevision: current!.engineRevision } : { runLinkId: row.runLink.runLinkId }) });
+          expectedRevision: current!.engineRevision, route:current!.providerRoute,
+          ...(paidOptIn?{paid:{optIn:true,capNanoUsd:paidCap}}:{}) } : { runLinkId: row.runLink.runLinkId }) });
     }
     const action = actions.current[operation]!;
     latch.current[operation] = true;
@@ -131,11 +136,16 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
       if (!mounted.current) return;
       setNotices(value => ({ ...value, [operation]: receipt.state === "refused" ? "The command was refused. Check status."
         : operation === "stop" ? "Stop requested" : "Start requested; check saved progress." }));
+      if (operation === "start" && receipt.state === "refused") delete actions.current.start;
       setRetry(value => ({ ...value, [operation]: receipt.state === "uncertain" }));
     } catch (error) {
       if (!mounted.current) return;
       if (clearsLoopAuthority(error)) { clearProtected(); read.clear(); writeEpoch.current += 1; setEpoch(writeEpoch.current); }
-      else {
+      else if (operation === "start" && error instanceof LoopReadError && [400, 409, 422].includes(error.status)) {
+        delete actions.current.start;
+        setRetry(value => ({ ...value, start: false }));
+        setNotices(value => ({ ...value, start: "The command was refused. Check status." }));
+      } else {
         setNotices(value => ({ ...value, [operation]: operation === "start"
           ? "Start could not be confirmed; check status" : "Stop could not be confirmed; check status" }));
         setRetry(value => ({ ...value, [operation]: true }));
@@ -174,6 +184,13 @@ function SelectedRun({ row, fresh, focus, refreshDesk }: { row: LoopImprovementR
         invalidate={() => { verifiedRead.current = false; writeEpoch.current += 1; setEpoch(writeEpoch.current); read.clear(); }}
         clearAuthority={() => { clearProtected(); read.clear(); writeEpoch.current += 1; setEpoch(writeEpoch.current); }}
         refresh={() => { read.refresh(); refreshDesk?.(); }} />}
+      {!snapshot?.providerRoute && <p>This saved request needs a provider choice. Prepare and confirm a new request.</p>}
+      <fieldset disabled={pending.start || !!actions.current.start}>
+        <legend>Paid admission for this run</legend>
+        <label><input type="checkbox" checked={paidOptIn} onChange={event=>setPaidOptIn(event.target.checked)} /> Allow a paid route for this run</label>
+        <label>Cap in nano-USD<input inputMode="numeric" value={paidCap} onChange={event=>setPaidCap(event.target.value)} /></label>
+        <p>Consent and cap apply only to this request. Paid execution is unavailable until enforcement is qualified.</p>
+      </fieldset>
       <button type="button" disabled={!startGate()} onClick={() => void submit("start")}>Start confirmed work</button>{" "}
       <button type="button" disabled={!stopTarget || pending.stop || !!actions.current.stop} onClick={() => void submit("stop")}>Stop this run</button>{" "}
       <button type="button" onClick={() => { read.refresh(); void refreshSharedTaskAttention(true); }}>Refresh status</button>

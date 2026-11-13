@@ -1,7 +1,7 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4ProviderServiceV1, s4TaskFixture } from '../helpers/improve-control-room-loop-recovery';
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import { build } from "esbuild";
 import { readFile } from "node:fs/promises";
-import { taskFixture } from "../helpers/web-task";
 import { now, origin, request, trust } from "../helpers/web-foundation";
 import { ImproveControlRoomDeskServiceV1 } from "../../src/improve-control-room/v1/service";
 import { ImproveControlRoomLoopServiceV1 } from "../../src/web/v1/improve-control-room-loop-service";
@@ -11,10 +11,10 @@ import { loopByteHashV1, type LoopEngineStatusV1, type LoopAdapterV1 } from "../
 import { type LoopImprovementDecisionsV1 } from "../../src/web/v1/improve-control-room-loop-attention-wire";
 import { sha256Digest } from "../../src/security";
 const KEY = new Uint8Array(32).fill(64);
-const settingsText = '{"project":{"host_adapter":"local-loop"},"fixture":"SYNTHETIC B2b"}';
+const settingsText = JSON.stringify({project:{host_adapter:"local-loop"},fixture:"SYNTHETIC B2b",providerRoute:S4_FIXTURE_ROUTE});
 const exact = "  Draft with café 🧭\r\nKeep every byte.  ";
 async function fixture() {
-  const f = await taskFixture();
+  const f = await s4TaskFixture();
   await f.db.query(`UPDATE projects SET payload=jsonb_set(payload,'{presentation}',
     '{"schema":"control-room.project-presentation/v1","templateId":"control-room","configurationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","templateDisplayName":"Control Room","enabledModules":[]}'::jsonb) WHERE id=$1`, [f.project.projectId]);
   const toolingRevision = sha256Digest({ fixture: "SYNTHETIC B2b" });
@@ -45,13 +45,15 @@ async function fixture() {
     override !== undefined ? override : ["stopped","finished"].includes(saved.state) ? null : saved.question ? {kind:"question",text:"Choose the saved scope.\r\nKeep café?"}
       : saved.approval ? {kind:"approve"} : !saved.confirmation ? {kind:"confirm"} : null } });
   let documentText = "Sealed complete plan.\n".repeat(4000), documentCalls = 0;
-  const adapter: LoopAdapterV1 = { adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
+  const adapter: LoopAdapterV1 = {
+    checkSettings:async text=>{expect(JSON.parse(text)).toEqual(JSON.parse(settingsText));return{eligible:true,reasons:[]};},
+    providerRoutes:s4FixtureRoutes, adapterId:"adapter:synthetic", toolingRevision, schemaDigest:sha256Digest({fixture:"SYNTHETIC B2b schema"}),settingsText,contract,
     available:()=>true,reserveRun:()=>`synthetic-run:${++sequence}`,
     intake:(id,b,text)=>complete("intake",id,b,text),confirmRequest:(id,b)=>complete("confirm",id,b),start:(id,b)=>complete("start",id,b),stop:(id,b)=>complete("stop",id,b),
     approve:(id,b)=>complete("approve",id,b),answer:(id,b,text)=>complete("answer",id,b,text),status:async()=>snapshot(),
     readApprovalDocument:async()=>{documentCalls++;return documentText;},close:async()=>{} };
   const desk = new ImproveControlRoomDeskServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},KEY,undefined,()=>now,contract);
-  const bridge = new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{integrityKey:KEY,adapter},()=>now);
+  const bridge = new ImproveControlRoomLoopServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},{providers:s4ProviderServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},()=>now),integrityKey:KEY,adapter},()=>now);
   const handler = createImproveControlRoomHttpHandlerV1({origin,trust,service:desk,loopBridge:bridge,clock:()=>now});
   const posts: {path:string;body:string;key:string}[] = [];
   const transport: typeof fetch = async (input, options) => {
@@ -178,6 +180,7 @@ for(const width of [360,1280])for(const colorScheme of ["light","dark"] as const
     const answer=page.getByRole("button",{name:"Send answer",exact:true});expect(await answer.evaluate(e=>e.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
     await answer.click();await expect(answer).toBeDisabled();expect(f.posts.filter(p=>p.path.endsWith("/answer"))).toHaveLength(1);
     releaseAnswer();await expect(page.getByRole("button",{name:"Retry this exact answer"})).toBeEnabled();await page.getByRole("button",{name:"Retry this exact answer"}).click();
+    await expect.poll(()=>f.posts.filter(p=>p.path.endsWith("/answer"))).toHaveLength(2);
     const answers=f.posts.filter(p=>p.path.endsWith("/answer"));expect(answers).toHaveLength(2);expect(answers[1]).toEqual(answers[0]);expect(f.calls.filter(c=>c==="answer")).toHaveLength(1);
     const stale=await f.handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/improvements/loop/${encodeURIComponent(id)}/answer`,"POST",
       {expectedVersion:1,expectedRevision:old.engine.revision,questionId:question.questionId,inputVersion:question.inputVersion,questionReportSha256:question.reportSha256,text:"Stale answer"},"b2b-browser-stale-0001"));

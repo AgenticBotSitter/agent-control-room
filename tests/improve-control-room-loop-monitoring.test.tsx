@@ -1,4 +1,6 @@
+import { S4_FIXTURE_ROUTE, s4FixtureRoutes, s4FixtureContractRoutes, s4ProviderServiceV1, s4TaskFixture } from './helpers/improve-control-room-loop-recovery';
 import assert from 'node:assert/strict';
+import { createLoopSelectionSourceFilesV1 } from '../src/web/v1/loop-selection-snapshot';
 import test from 'node:test';
 import { createPrivateTaskBootstrap } from '../src/web/v1/private-task-startup';
 import { taskStartupFixture } from './helpers/task-startup';
@@ -248,9 +250,9 @@ if(ordinary){
   });
 }
 if(!ordinary)test('B3b product collector contention',async t=>{
-  const db=await taskFixture();t.after(()=>db.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const db=await s4TaskFixture();t.after(()=>db.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const saved=await seedRecoveryRun({...db,db:db.client,scope},e,db.project.projectId,()=>webNow,'b3b-load-stop');
-  const bridge=new ImproveControlRoomLoopServiceV1(db.client,scope,{integrityKey:recoveryKey,adapter:e.adapter},()=>webNow);
+  const bridge=new ImproveControlRoomLoopServiceV1(db.client,scope,{providers:s4ProviderServiceV1(db.client,scope,()=>webNow),integrityKey:recoveryKey,adapter:e.adapter},()=>webNow);
   const f=await fixture(t,e.root,'availability.json');let calls=0,winner=-1,release!:()=>void,entered!:()=>void;
   const reached=new Promise<void>(r=>{entered=r;});
   const config={...f.configuration,collect:async(signal:AbortSignal,onChild:(pid:number)=>Promise<void>)=>{calls++;await onChild(process.pid);entered();await new Promise<void>(r=>{release=r;signal.addEventListener('abort',()=>r(),{once:true});});return{exitCode:0,bytes:payload(f.wall())};}};
@@ -285,13 +287,13 @@ import {useSharedTaskAttention,refreshSharedTaskAttention} from '../private-app/
 import {ImprovementRunPanel} from '../private-app/app/improvement-run-panel';
 function Surfaces(){const attention=useSharedTaskAttention(true);return <LocalRuntimeContextV1.Provider value={{mode:'hosted'}}><PrivateHeader/><HomeDashboard data={{activity:{state:'unavailable'},projects:{state:'unavailable'},connections:{state:'ready',value:{source:'local',value:{taskWorkersStarted:true,workers:[],projectSections:[]}}},attention}}/></LocalRuntimeContextV1.Provider>;}
 if(ordinary)test('B3b actual adapter service and rendered attention remain one lower bound',async t=>{
-  const f=await taskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const seeded=await seedRecoveryRun({...f,db:f.client,scope},e,f.project.projectId,()=>webNow,'b3b-render');
   let reason:unknown={reasonCode:'LOGIN_REQUIRED',deadline:null,workerState:'none'},gate:LoopImprovementDecisionsV1['gate']=null,decodes=0;
   const a=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,
     decisionProjection:{questionTextPath:['counters','questionText'],decodeGate:()=>gate},
     monitoring:{enabled:()=>true,decodeStatus:(_raw,status)=>{decodes++;assert.equal(status.run.loopRunId,seeded.run);return reason;}}}});t.after(()=>a.close());
-  const service=()=>new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:a},()=>webNow);
+  const service=()=>new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>webNow),integrityKey:recoveryKey,adapter:a},()=>webNow);
   let bridge=service();
   const attention=async()=>{const source=await bridge.readAttention(f.identity);assert.ok(source.state==='available');return source;};
   const before=await readFile(e.configuration.availabilityFile);
@@ -349,12 +351,12 @@ if(ordinary)test('B3b aggregate timeout TERM grace KILL and no timers after reap
 });
 
 if(ordinary)test('B3b status and Stop stay responsive during collection and disable drains',async t=>{
-  const f=await taskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
+  const f=await s4TaskFixture();t.after(()=>f.db.close());const e=await monitoringEngine(t),scope={tenantId:'tenant:web',workspaceId:'workspace:web'};
   const saved=await seedRecoveryRun({...f,db:f.client,scope},e,f.project.projectId,()=>webNow,'b3b-stop-held');
   await e.behavior({hold:true,ignoreTerm:true});let enabled=true;
   const recovery={enabled:()=>true,inspect:async()=>{throw Error('SYNTHETIC unavailable');},claimDriver:async()=>({kind:'busy' as const,evidenceDigest:sha256Digest('SYNTHETIC')})};
   const a=createImproveControlRoomLoopAdapterV1({...e.configuration,contract:{...e.configuration.contract,recovery,monitoring:{enabled:()=>enabled,decodeStatus:()=>({reasonCode:'PROVIDER_UNAVAILABLE',deadline:null,workerState:'live'})}}});t.after(()=>a.close());
-  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{integrityKey:recoveryKey,adapter:a},()=>webNow);
+  const bridge=new ImproveControlRoomLoopServiceV1(f.client,scope,{providers:s4ProviderServiceV1(f.client,scope,()=>webNow),integrityKey:recoveryKey,adapter:a},()=>webNow);
   a.monitoringTick!();await until(async()=>(await e.healthTraces()).length===1);
   const at=performance.now();const s=await bridge.status(f.identity,f.project.projectId,saved.id);assert.equal(s.display.canStop,true);
   const stopped=await bridge.mutate(f.identity,f.project.projectId,saved.id,'stop',{runLinkId:saved.link},'b3b-stop-held-0001');assert.ok(['accepted','uncertain'].includes(stopped.state));
@@ -482,4 +484,30 @@ if(ordinary)test('B3b reviewed A2 monitoring contract',{
     assert.equal(proof.serviceRestarts,2);assert.equal(proof.staleRefusals,0);
     assert.equal(proof.dispatchesThroughRefreshed,1);assert.equal(proof.overdueFacts,1);assert.equal(proof.countersChanged,false);
   }
+});
+
+test('T-SNAPSHOT monitor source fence preserves availability and schedule while busy',async t=>{
+  const f=await fixture(t);await f.tick();f.advance(3000000);
+  const root=join(f.root,'selection-sources');await mkdir(root,{mode:0o700});
+  await mkdir(join(root,'fence'),{mode:0o700});
+  await writeFile(join(root,'fence/owner.json'),JSON.stringify({schemaVersion:1,nonce:'a'.repeat(32)}),{mode:0o600});
+  const before=await readFile(f.file),schedule=await readFile(f.file+'.schedule.json');
+  const selectionSources=createLoopSelectionSourceFilesV1({availabilityFile:f.file,rosterFile:join(f.root,'unused-roster.tsv'),readAvailability:()=>f.monitor.readAvailability()});
+  selectionSources.initialize();f.available(false);
+  const m=createImproveControlRoomLoopMonitorV1({...f.configuration,selectionSources} as Parameters<typeof createImproveControlRoomLoopMonitorV1>[0]);
+  t.after(()=>m.close());await f.tick(m);
+  assert.deepEqual(await readFile(f.file),before,'busy source fence must prevent health publication');
+  assert.deepEqual(await readFile(f.file+'.schedule.json'),schedule,'busy source fence must prevent schedule publication');
+  await rm(join(root,'fence'),{recursive:true});
+  await f.tick(m);assert.notDeepEqual(await readFile(f.file),before,'next existing attempt publishes after fence release');
+  assert.equal(JSON.parse(await readFile(f.file,'utf8')).entries[0].available,false);
+});
+
+test('T-SNAPSHOT monitor invalidates current before health publication',async t=>{
+  const f=await fixture(t);
+  const selectionSources=createLoopSelectionSourceFilesV1({availabilityFile:f.file,rosterFile:join(f.root,'unused-roster.tsv'),readAvailability:()=>f.monitor.readAvailability()});
+  selectionSources.initialize();await writeFile(join(selectionSources.root,'current.json'),'SYNTHETIC previous snapshot',{mode:0o600});
+  const m=createImproveControlRoomLoopMonitorV1({...f.configuration,selectionSources});t.after(()=>m.close());
+  await f.tick(m);assert.equal(existsSync(join(selectionSources.root,'current.json')),false,'publication must invalidate old current');
+  assert.equal(existsSync(join(selectionSources.root,'dirty.json')),true);
 });
