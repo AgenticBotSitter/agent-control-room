@@ -209,13 +209,21 @@ export async function requireB5RecipesV1(checks: unknown, root: string): Promise
   }
 }
 
-export type FirstWebsitePreflightV1 = { config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
+export type FirstWebsitePolicyV1 = {
+  id?: "first-website" | "model-eval";
+  rootName: RegExp; requestText: string; requiredRisk: { readonly categories: readonly string[]; readonly slots: readonly string[] };
+  validateRecipes(checks: unknown, root: string): Promise<void>;
+  validateInputs?(root: string, settings: unknown, availability: unknown, identities?: unknown): Promise<void>;
+  verifySources?(root: string, comparisonFile?: string): Promise<void>;
+};
+export type FirstWebsitePreflightV1 = { profile?: FirstWebsitePolicyV1; config: FirstWebsiteConfigV1; uid: number; evidenceDir: string;
+  sourceCheck?: (comparisonFile?: string) => Promise<void>;
   controllerOwner?: import("../../scripts/workflow-journeys/first-website-controller").B5ControllerOwnerV1;
   capture:B5CaptureQualificationV1; providers: B5ProviderProvenanceV1; digests: Record<string, string>; settings: { riskCategories: string[]; riskSlots: string[] }; phoneTransport: "tailscale-serve" | "loopback-only"; realEvidence?: B5RealEvidenceQualificationV1; rehearsal?: B5RehearsalPacketV1 };
 /** Everything is validated before any import, resource creation or A2 call. Read-only
  * except for transient loopback bind probes of the reserved ports. */
 export async function preflightFirstWebsiteV1(input: { configFile: string; evidenceDir: string; cliFile: string;
-  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1; existingEvidence?: boolean }): Promise<FirstWebsitePreflightV1> {
+  uid?: number; probe?: (port: number) => Promise<boolean>; signalOwner?: FirstWebsiteCleanupOwnerV1; existingEvidence?: boolean; profile?: FirstWebsitePolicyV1 }): Promise<FirstWebsitePreflightV1> {
   const uid = input.uid ?? process.getuid?.() ?? refuse("B5_EXECUTION_IDENTITY_UNAVAILABLE");
   await canonical(input.configFile, "file", "B5_CONFIG_PATH");
   let raw: unknown;
@@ -223,10 +231,10 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   const parsed = firstWebsiteConfigSchemaV1.safeParse(raw);
   if (!parsed.success) refuse("B5_CONFIG_INVALID", parsed.error.issues.map(issue => issue.path.join(".")).join(","));
   const config = parsed.data!;
-  if (config.requestText !== B5_REQUEST_TEXT) refuse("B5_REQUEST_TEXT_CHANGED");
+  if (config.requestText !== (input.profile?.requestText ?? B5_REQUEST_TEXT)) refuse("B5_REQUEST_TEXT_CHANGED");
   // Scratch root: unique, owned, non-Git, and the only home of every disposable input.
   const root = config.scratchRoot, rootStat = await canonical(root, "directory", "B5_SCRATCH_ROOT");
-  if (!/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1))) refuse("B5_SCRATCH_ROOT", "name");
+  if (!(input.profile?.rootName ?? /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u).test(root.slice(dirname(root).length + 1))) refuse("B5_SCRATCH_ROOT", "name");
   if (rootStat.uid !== uid) refuse("B5_EXECUTION_IDENTITY_MISMATCH", "scratch owner");
   if (await lstat(join(root, ".git")).then(() => true, () => false)) refuse("B5_SCRATCH_ROOT", "git");
   const evidenceDir = join(root, "evidence");
@@ -261,11 +269,11 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   let settings: { project?: { risk_categories?: unknown; test_checks?: unknown }; roles?: { risk_reviews?: unknown; code_reviews?: unknown } };
   try { settings = JSON.parse(await readFile(config.settingsFile, "utf8")); } catch { refuse("B5_SETTINGS_INVALID", "json"); }
   const categories = settings!.project?.risk_categories, slots = settings!.roles?.risk_reviews, checks = settings!.project?.test_checks;
-  if (!Array.isArray(categories) || !B5_REQUIRED_RISK.categories.every(name => categories.includes(name))) refuse("B5_RISK_CATEGORIES");
+  if (!Array.isArray(categories) || !(input.profile?.requiredRisk ?? B5_REQUIRED_RISK).categories.every(name => categories.includes(name))) refuse("B5_RISK_CATEGORIES");
   const slotRoles = Array.isArray(slots) ? slots.map(slot => (slot as { role?: unknown })?.role) : [];
-  if (!B5_REQUIRED_RISK.slots.every(role => slotRoles.includes(role))) refuse("B5_RISK_SLOTS");
+  if (!(input.profile?.requiredRisk ?? B5_REQUIRED_RISK).slots.every(role => slotRoles.includes(role))) refuse("B5_RISK_SLOTS");
   if (!Array.isArray(settings!.roles?.code_reviews) || settings!.roles!.code_reviews.length !== 2) refuse("B5_CODE_REVIEW_SLOTS");
-  await requireB5RecipesV1(checks, root);
+  await (input.profile?.validateRecipes ?? requireB5RecipesV1)(checks, root);
   // Qualification bytes are independently supplied, confined and hashed above. No default real provider.
   let qualification: { providers?: unknown; capture?:unknown; realEvidence?:unknown; rehearsal?: { packetFile: string; packetSha256: string } };
   const providerBytes = await readFirstWebsitePrivateBytesV1(config.a2.qualificationEvidence, root);
@@ -284,6 +292,8 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
     const marker=z.object({version:z.literal(1),providers:z.literal("fixture"),reason:z.literal("B5_PROVIDER_FIXTURE")}).passthrough().safeParse(staged);
     if(!marker.success || providers.classification !== "fixture" || providers.transport !== "scripted") refuse("B5_PROVIDER_PROVENANCE_MISMATCH");
   }
+  if (input.profile?.validateInputs) await input.profile.validateInputs(root, settings,
+    JSON.parse(await readFile(config.availabilityFile, 'utf8')), providers.lineup);
   const capture = b5CaptureQualificationSchemaV1.safeParse(qualification!.capture);
   if (!capture.success || capture.data.qualificationDigest !== digests.transport) refuse("B5_CAPTURE_PROVENANCE_MISMATCH");
   if (!loopback && capture.data!.approval !== "approved") refuse("B5_CAPTURE_MODE_UNAPPROVED");
@@ -294,7 +304,7 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
       || config.maxDurationMs > 600_000) refuse("B5_REHEARSAL_PACKET_INVALID");
     if (b5Bytes(await readFirstWebsitePrivateBytesV1(r.data!.packetFile, root)) !== r.data!.packetSha256)
       refuse("B5_REHEARSAL_PACKET_CHANGED");
-    rehearsal = await requireFirstWebsiteRehearsalPart2V1(r.data!.packetFile);
+    rehearsal = await requireFirstWebsiteRehearsalPart2V1(r.data!.packetFile, input.profile?.rootName);
     if (rehearsal.root !== root || rehearsal.toolingRevision !== config.a2.toolingRevision
       || rehearsal.productRevision !== config.product.candidateRevision) refuse("B5_REHEARSAL_PACKET_CHANGED");
   }
@@ -313,7 +323,9 @@ export async function preflightFirstWebsiteV1(input: { configFile: string; evide
   if (config.ports.product !== B5_PORTS.product || config.ports.preview !== B5_PORTS.preview || config.ports.postgresBase !== B5_PORTS.postgresBase
     || ports.some(port => B5_PROTECTED_PORTS.includes(port))) refuse("B5_PORT_RESERVATION");
   for (const port of ports) if (!await (input.probe ?? portFree)(port)) refuse("B5_PORT_BUSY", String(port));
-  return { config, uid, evidenceDir, providers, capture:capture.data!, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
+  await input.profile?.verifySources?.(root);
+  return { ...(input.profile?.verifySources ? { sourceCheck: (comparisonFile?: string) => input.profile!.verifySources!(root, comparisonFile) } : {}),
+    ...(input.profile ? { profile: input.profile } : {}), config, uid, evidenceDir, providers, capture:capture.data!, digests, settings: { riskCategories: categories as string[], riskSlots: slotRoles as string[] },
     phoneTransport: loopback ? "loopback-only" : "tailscale-serve", ...(realEvidence ? {realEvidence} : {}), ...(rehearsal ? { rehearsal } : {}) };
 }
 
@@ -328,11 +340,11 @@ export const b5RehearsalPacketSchemaV1 = z.object({
     "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"]).nullable(),sha256:sha256.nullable()}).strict().refine(b=>(b.executablePath === null) === (b.sha256 === null)),
 }).strict();
 export type B5RehearsalPacketV1 = z.infer<typeof b5RehearsalPacketSchemaV1>;
-export async function requireFirstWebsiteRehearsalPart2V1(packet?: unknown): Promise<B5RehearsalPacketV1> {
+export async function requireFirstWebsiteRehearsalPart2V1(packet?: unknown, rootName = /^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u): Promise<B5RehearsalPacketV1> {
   if (packet === undefined) refuse("B5_A2_QUALIFICATION_REQUIRED");
   if (typeof packet !== "string" || !absolute.safeParse(packet).success) refuse("B5_REHEARSAL_PACKET_INVALID");
   const file = packet as string, root = dirname(dirname(file));
-  if (file !== join(root, "config/b5-rehearsal.json") || !/^acr-b5-[A-Za-z0-9][A-Za-z0-9-]{0,63}$/u.test(root.slice(dirname(root).length + 1)))
+  if (file !== join(root, "config/b5-rehearsal.json") || !rootName.test(root.slice(dirname(root).length + 1)))
     refuse("B5_REHEARSAL_PACKET_INVALID");
   let parsed;
   try { parsed = b5RehearsalPacketSchemaV1.safeParse(JSON.parse((await readFirstWebsitePrivateBytesV1(file, root)).toString("utf8"))); }
@@ -672,8 +684,21 @@ export function assertB5ProviderProvenanceV1(manifest: B5ManifestV1, journey: B5
   if (p.lineup.some(q=>!admitted.has(key(q)))) refuse("B5_PROVIDER_PROVENANCE_MISMATCH");
   return p.transport === "scripted" ? ["B5_PROVIDER_FIXTURE"] : [];
 }
+/** Project-specific assertions; custody, lineage, capture and cleanup remain shared. */
+export type JourneyCheckRecordV1 = Omit<B5StatusCheckRecordV1, "label" | "recipe" | "argv"> & {
+  label: string; recipe: string; argv: readonly string[];
+};
+export type FirstWebsiteEvidencePolicyV1 = {
+  requiredRisk?: FirstWebsitePolicyV1["requiredRisk"];
+  requireRejectedDiagnosticFailure?: boolean;
+  checkSchema?: z.ZodType<JourneyCheckRecordV1>;
+  assertFullReport?(card: LoopCandidateCardV1): void;
+  assertCardChecks?(card: LoopCandidateCardV1): void;
+  assertRepository?(repository: string, manifest: B5ManifestV1, checks: JourneyCheckRecordV1[], card: LoopCandidateCardV1): Promise<void>;
+  validateJourney?(journey: B5JourneyV1): Promise<void>;
+};
 /** The manifest's recorded pins equal what preflight qualified and what the card binds. */
-export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidateCardV1, journey: B5JourneyV1, pins: B5QualifiedPinsV1) {
+export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidateCardV1, journey: B5JourneyV1, pins: B5QualifiedPinsV1, policy?: FirstWebsiteEvidencePolicyV1) {
   const p = manifest.pins, d = pins.digests, b = card.evidence.binding, bad = (why: string) => refuse("B5_MANIFEST_PINS", why);
   if (pins.realEvidence && (p.jobSandboxDigest !== pins.realEvidence.jobSandboxDigest
     || p.recipeDigest !== pins.realEvidence.recipeDigest || manifest.product.environmentDigest !== pins.realEvidence.environmentDigest)) bad("real qualification");
@@ -681,7 +706,8 @@ export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidate
   if (p.settingsSha256 !== d.settings || p.availabilitySha256 !== d.availability || p.authorizationSha256 !== d.authorization
     || p.qualificationDigest !== d.qualification || p.assemblyDigest !== d.assembly || p.faultInputSha256 !== d.faultInput || p.reviewInputSha256 !== d.reviewInput) bad("inputs");
   if (p.recipeDigest !== b.recipeDigest || manifest.product.environmentDigest !== b.environmentDigest) bad("card binding");
-  if (!B5_REQUIRED_RISK.categories.every(c => manifest.risk.categories.includes(c)) || !B5_REQUIRED_RISK.slots.every(s => manifest.risk.slots.includes(s))) bad("risk");
+  const risk = policy?.requiredRisk ?? B5_REQUIRED_RISK;
+  if (!risk.categories.every(c => manifest.risk.categories.includes(c)) || !risk.slots.every(s => manifest.risk.slots.includes(s))) bad("risk");
   if (manifest.launch.uid !== pins.uid) bad("uid");
   if (manifest.lineage.loopRunId !== b.loopRunId || manifest.lineage.localVersion !== card.localVersion || manifest.lineage.a2InputVersion !== card.a2InputVersion) bad("lineage");
   const confirm = journey.actions.filter(a => a.method === "POST" && /\/improvements\/loop\/[^/]+\/confirm$/u.test(a.path)).map(a => ms(a.at));
@@ -694,23 +720,23 @@ export function assertManifestPinsV1(manifest: B5ManifestV1, card: LoopCandidate
 /** Legacy one-rejection manifests have only `rejected`; new evidence records every distinct rejected head. */
 export const b5RejectedHeadsV1 = (heads: B5ManifestV1["heads"]) => heads.rejectedHeads ?? [heads.rejected];
 /** Independent records cover the rejected heads in order, then the final head; never A2 receipts. */
-export function assertB5DiagnosticRecordsV1(heads: B5ManifestV1["heads"], checks: B5StatusCheckRecordV1[]) {
+export function assertB5DiagnosticRecordsV1(heads: B5ManifestV1["heads"], checks: JourneyCheckRecordV1[], policy?: FirstWebsiteEvidencePolicyV1) {
   const expected = [...b5RejectedHeadsV1(heads), heads.final], passed = checks.at(-1);
   if (checks.length !== expected.length || checks.some((check, i) => check.head !== expected[i])) refuse("B5_HEAD_BINDING", "diagnostic heads");
-  if (checks.slice(0, -1).some(check => check.exitCode === 0 || check.failed < 1)
+  if (policy?.requireRejectedDiagnosticFailure !== false && checks.slice(0, -1).some(check => check.exitCode === 0 || check.failed < 1)
     || passed!.exitCode !== 0 || passed!.completed < 1 || passed!.passed !== passed!.completed
     || passed!.failed !== 0 || passed!.skipped !== 0 || checks.some((check, i) => check.protectedTestsDigest !== passed!.protectedTestsDigest
       || i > 0 && ms(checks[i - 1]!.endedAt) > ms(check.startedAt))) refuse("B5_HEAD_BINDING", "diagnostic results");
 }
 /** (b) Rejected/final heads, the finish-card DOM, the card's checks and every artifact byte bind to the saved card. */
-export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCheckRecordV1[], outputs: ReadonlyMap<string, Uint8Array>,
-  card: LoopCandidateCardV1, journey: B5JourneyV1) {
+export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: JourneyCheckRecordV1[], outputs: ReadonlyMap<string, Uint8Array>,
+  card: LoopCandidateCardV1, journey: B5JourneyV1, policy?: FirstWebsiteEvidencePolicyV1) {
   const { base, rejected, final } = manifest.heads, b = card.evidence.binding;
   if (card.candidateRevision !== final) refuse("B5_HEAD_BINDING", "card head");
   const rejectedHeads = b5RejectedHeadsV1(manifest.heads), heads = [base, ...rejectedHeads, final];
   if (rejectedHeads[0] !== rejected || new Set(heads).size !== heads.length || b.baseRevision !== base
     || manifest.lineage.requestId !== card.requestId || manifest.lineage.runLinkId !== b.runLinkId) refuse("B5_HEAD_BINDING", "card");
-  assertB5DiagnosticRecordsV1(manifest.heads, checks);
+  assertB5DiagnosticRecordsV1(manifest.heads, checks, policy);
   const rejectingReviews = card.evidence.reviews.filter(r => r.role === "code-review" && r.verdict === "NEEDS-FIX");
   if (rejectedHeads.some(head => !rejectingReviews.some(r => r.candidateRevision === head))
     || rejectingReviews.some(r => !rejectedHeads.includes(r.candidateRevision))) refuse("B5_HEAD_BINDING", "rejected reviews");
@@ -721,9 +747,12 @@ export function assertHeadsAndBytesV1(manifest: B5ManifestV1, checks: B5StatusCh
   // The card's required recipe really ran at the final head. site-status is the controller's independent diagnostic
   // (the independent records above plus the review sidecar); a card row, if A2 carries one, must stay optional.
   // Refusing a required row is a policy proxy: the verifier cannot see the pinned recipe's flags.
+  if (policy?.assertCardChecks) policy.assertCardChecks(card);
+  else {
   const smoke = card.evidence.checks.find(c => c.id === "site-smoke"), status = card.evidence.checks.find(c => c.id === "site-status");
   if (!smoke || !smoke.required || smoke.status !== "PASS" || smoke.candidateRevision !== card.candidateRevision || smoke.completed < 1 || smoke.failed !== 0
     || smoke.skipped !== 0 || status?.required === true) refuse("B5_HEAD_BINDING", "card checks");
+  }
   for (const check of checks) if (b5Bytes(outputs.get(check.outputPath) ?? "") !== check.outputSha256) refuse("B5_ARTIFACT_BYTES", check.outputPath);
 }
 const statusTag = (html: string) => /<([a-z][a-z0-9]*)\b([^>]*\bid="status"[^>]*)>([^<]*)</iu.exec(html);
@@ -763,7 +792,7 @@ export function assertCandidateRepositoryV1(facts: Awaited<ReturnType<typeof rea
   if (!title(facts.pages.final) || !final || !/\bReady\b/u.test(final[3]!) || !/\brole="status"/u.test(final[2]!)) bad("final page");
 }
 /** (c) Real reviewer rejection while the browser was closed, original-builder repair, fresh reviews. */
-export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5JourneyV1) {
+export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5JourneyV1, policy?: FirstWebsiteEvidencePolicyV1) {
   const { final } = manifest.heads, rejectedHeads = b5RejectedHeadsV1(manifest.heads);
   const steps = [...journey.steps].sort((a, b) => a.n - b.n);
   const closed = (s: z.infer<typeof step>) => journey.closed.some(c => ms(c.from) <= ms(s.startedAt) && ms(s.endedAt) <= ms(c.to));
@@ -779,7 +808,7 @@ export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5Journ
     const build = steps.find(s => s.role === "build" && s.head === head);
     const rejecting = rejections.filter(s => s.head === head);
     if (!build || !rejecting.length || rejecting.some(s => s.n <= build.n || s.family === build.family || !qualified(s)
-      || s.diagnostic !== "FAIL" || !s.findings.some(f => f.severity === "MEDIUM"))) broken("rejection");
+      || (policy?.requireRejectedDiagnosticFailure !== false ? s.diagnostic !== "FAIL" : !["PASS", "FAIL"].includes(s.diagnostic ?? "")) || !s.findings.some(f => f.severity === "MEDIUM"))) broken("rejection");
     const lastRejection = Math.max(...rejecting.map(s => s.n));
     const repair = steps.find(s => s.role === "build" && s.n > lastRejection);
     if (!repair || repair.head !== (rejectedHeads[i + 1] ?? final)
@@ -791,7 +820,7 @@ export function assertRejectionRepairV1(manifest: B5ManifestV1, journey: B5Journ
   const fresh = (role: string) => after.filter(s => s.role === role && s.head === final && s.verdict === "CLEAN" && qualified(s) && s.family !== repair.family);
   const codes = fresh("code-review");
   if (codes.length < 2 || new Set(codes.map(s => s.family)).size < 2 || codes.some(s => s.diagnostic !== "PASS")) broken("fresh code reviews");
-  for (const role of ["attack-review", "ui-review", "ci-review", "final"]) if (!fresh(role).length) broken(`fresh ${role}`);
+  for (const role of [...(policy?.requiredRisk?.slots ?? ["attack-review", "ui-review", "ci-review"]), "final"]) if (!fresh(role).length) broken(`fresh ${role}`);
   // The defective build is special: the owner's spec approval starts it, and the browser-close handshake
   // finishes after the engine has begun. Its interval therefore begins at the owner's latest action at or
   // before `from` (`from` itself when there is none), so no owner action can fall inside the build; it must
@@ -1076,7 +1105,7 @@ export async function readB5CandidateResponseV1(response: Response) {
  * A bare parsed card remains accepted for early card/lineage refusal checks, but
  * cannot authenticate an HTTP response digest and refuses capture correlation. */
 export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: { readCard: () => Promise<unknown>; candidateRepository: string;
-  pins: B5QualifiedPinsV1; retention?:B5RetentionV1; finishTeardown?: () => Promise<void> }): Promise<B5VerdictV1> {
+  pins: B5QualifiedPinsV1; retention?:B5RetentionV1; finishTeardown?: () => Promise<void>; policy?: FirstWebsiteEvidencePolicyV1 }): Promise<B5VerdictV1> {
   const result = await input.readCard();
   const observed = result instanceof Response ? await readB5CandidateResponseV1(result) : result;
   const http = observed && typeof observed === "object" && "card" in observed && "responseDigest" in observed
@@ -1084,8 +1113,11 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
   const read = loopCandidateCardSchemaV1.safeParse(http ? http.card : observed);
   if (!read.success) refuse("B5_CARD_UNAVAILABLE");
   const card = read.data!;
+  if (input.policy?.assertFullReport) input.policy.assertFullReport(card);
+  else {
   if (!card.evidence.summary?.trim() || !card.evidence.changedAreas?.includes("index.html") || card.evidence.databaseChanges?.kind !== "none"
     || card.evidence.assumptions === null || card.evidence.validations === null) refuse("B5_FULL_REPORT_INCOMPLETE");
+  }
   await input.finishTeardown?.();
   const evidenceStat = await canonical(evidenceDir, "directory", "B5_ARTIFACT_BYTES");
   if ((evidenceStat.mode & 0o777) !== 0o700 || evidenceStat.uid !== process.getuid?.()) refuse("B5_ARTIFACT_BYTES");
@@ -1119,17 +1151,19 @@ export async function verifyFirstWebsiteEvidenceV1(evidenceDir: string, input: {
     artifacts.set(entry.path, bytes);
   }
   for (const path of B5_REQUIRED_ARTIFACTS) if (!artifacts.has(path)) refuse("B5_ARTIFACT_MISSING", path);
-  const checks = json(z.array(b5StatusCheckRecordSchemaV1), artifacts.get("independent-status-check.json")!, "B5_DIAGNOSTIC_INVALID");
+  const checks = json(z.array(input.policy?.checkSchema ?? b5StatusCheckRecordSchemaV1), artifacts.get("independent-status-check.json")!, "B5_DIAGNOSTIC_INVALID");
   for (const check of checks) if (!artifacts.has(check.outputPath)) refuse("B5_ARTIFACT_MISSING", check.outputPath);
   const journey = json(b5JourneySchemaV1, artifacts.get("journey.json")!, "B5_JOURNEY_INVALID");
   const teardown = json(b5TeardownSchemaV1, artifacts.get("teardown.json")!, "B5_TEARDOWN_INVALID");
   const snapshot = json(b5DatabaseSnapshotSchemaV1, artifacts.get("database-snapshot.json")!, "B5_SNAPSHOT_INVALID");
   for (const entry of snapshot.rows) if (b5Bytes(JSON.stringify(entry.row)) !== entry.sha256) refuse("B5_SNAPSHOT_INVALID", entry.table);
-  assertHeadsAndBytesV1(manifest, checks, artifacts, card, journey);
+  assertHeadsAndBytesV1(manifest, checks, artifacts, card, journey, input.policy);
   assertRealChainV1(manifest, card, snapshot, journey, input.pins);
-  assertManifestPinsV1(manifest, card, journey, input.pins);
-  assertCandidateRepositoryV1(await readCandidateRepositoryV1(input.candidateRepository, manifest.heads), manifest, checks, card);
-  assertRejectionRepairV1(manifest, journey);
+  assertManifestPinsV1(manifest, card, journey, input.pins, input.policy);
+  if (input.policy?.assertRepository) await input.policy.assertRepository(input.candidateRepository, manifest, checks, card);
+  else assertCandidateRepositoryV1(await readCandidateRepositoryV1(input.candidateRepository, manifest.heads), manifest, checks as B5StatusCheckRecordV1[], card);
+  assertRejectionRepairV1(manifest, journey, input.policy);
+  await input.policy?.validateJourney?.(journey);
   assertCleanupRetainedV1(teardown, card, snapshot, manifest.timestamps.finishedAt);
   assertB5ActionEvidenceV1(journey, card, teardown, artifacts, input.pins, http?.responseDigest);
   assertB5RealSessionEvidenceV1(manifest,journey,artifacts,input.pins);

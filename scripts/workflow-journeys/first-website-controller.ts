@@ -1,11 +1,12 @@
 import { loopAdapterUnavailableDetailV1 } from "../../src/web/v1/improve-control-room-loop-adapter";
 // Proof-only foreground controller. Imports are inert. Engine commands go
 // through the product website; role input binding uses the qualified A2 entry.
+import { FIRST_WEBSITE_PROFILE, resolveJourneyProfileV1, type JourneyProfile } from "../../tests/helpers/improve-control-room-model-eval";
 import { randomBytes } from "node:crypto";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
-  b5JourneySchemaV1, finalizeFirstWebsiteEvidenceV1, missingB5TransportCleanupV1, B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
+  type JourneyCheckRecordV1, b5JourneySchemaV1, finalizeFirstWebsiteEvidenceV1, missingB5TransportCleanupV1, B5RefusalV1, B5_MAX_DURATION_MS, B5_REQUEST_TEXT, b5Bytes, type B5VerdictV1, type FirstWebsiteCleanupOwnerV1,
   loadFirstWebsiteAssemblyV1, probeBindInputCapabilityV1, bindFirstWebsiteInputsV1, assertRoleScopedBriefsV1,
   b5FaultScanPolicySchemaV1, normalizeB5FaultTextV1, assertB5FaultTextAbsentV1, assertB5FaultValueAbsentV1, auditFirstWebsiteReviewV1, readB5ReviewGitSurfacesV1,
   readFirstWebsitePrivateBytesV1, runIndependentStatusCheckV1, verifyFirstWebsiteEvidenceV1, readB5CandidateResponseV1, assertFirstWebsiteOwnerCommandV1,
@@ -408,7 +409,8 @@ async function ownerChannel(host: FirstWebsiteHostV1, root: string, owner: B5Con
 
 /** Independent no-remote retained checkout. Never resets the builder's active
  * repository, and never turns these diagnostic records into engine receipts. */
-async function diagnosticSnapshot(repository: string, root: string, head: string, label: string) {
+export async function diagnosticSnapshot(repository: string, root: string, head: string, label: string,
+  profile: JourneyProfile = FIRST_WEBSITE_PROFILE, requireRejectedDiagnosticFailure = true) {
   need(/^[a-f0-9]{40}$/u.test(head) && /^(rejected|final)$/u.test(label), "B5_DIAGNOSTIC_HEAD");
   const directory = join(dirname(root), `diagnostic-${label}-${head}`);
   await mkdir(directory, { mode: 0o700 });
@@ -417,12 +419,18 @@ async function diagnosticSnapshot(repository: string, root: string, head: string
   });
   await git(["init", "--quiet"]); await git(["fetch", "--quiet", "--no-tags", "--depth=1", "--", repository, head]);
   await git(["checkout", "--quiet", "--detach", head]); need((await git(["remote"])).stdout.trim() === "", "B5_PROJECT_REMOTE");
-  const result = await runIndependentStatusCheckV1(directory, `status-check/${label}-${head}.txt`);
+  const result = profile.id === "model-eval"
+    ? await profile.diagnostic.runner(dirname(root), directory, `evidence/lean-${label}-${head}.txt`)
+    : await runIndependentStatusCheckV1(directory, `status-check/${label}-${head}.txt`);
   await mkdir(join(root, "status-check"), { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
-  await writeFile(join(root, result.record.outputPath), result.output, { flag: "wx", mode: 0o600 });
+  if (profile.id === "model-eval") result.record.outputPath = result.record.outputPath.slice("evidence/".length);
+  else await writeFile(join(root, result.record.outputPath), result.output, { flag: "wx", mode: 0o600 });
   await writeFile(join(root, "status-check", `${label}-${head}.json`), JSON.stringify(result.record), { flag: "wx", mode: 0o600 });
   need(result.record.head === head && result.record.completed > 0 && result.record.skipped === 0
-    && (label === "rejected" ? result.record.exitCode === 1 && result.record.failed > 0
+    && (label === "rejected" ? profile.id === "model-eval"
+      ? (!requireRejectedDiagnosticFailure || result.record.exitCode === 1 && result.record.failed > 0)
+        && (result.record.exitCode === 0 ? result.record.failed === 0 && result.record.passed === result.record.completed : result.record.exitCode === 1 && result.record.failed > 0)
+      : result.record.exitCode === 1 && result.record.failed > 0
       && result.output.includes("status element announces itself with role=status") && result.output.includes("ERR_ASSERTION")
       : result.record.exitCode === 0 && result.record.failed === 0 && result.record.passed === result.record.completed), "B5_DIAGNOSTIC_RESULT");
   return result;
@@ -561,8 +569,19 @@ const journeyPorts = {
   bindInputs: bindFirstWebsiteInputsV1, ownerChannel, captureDesktop: captureFirstWebsiteDesktopV1,
   diagnosticSnapshot, verifyEvidence: verifyFirstWebsiteControllerEvidenceV1,
 };
+export function journeyPortsForProfileV1(profile: JourneyProfile = FIRST_WEBSITE_PROFILE, fixture = false): typeof journeyPorts {
+  if (profile.id === "first-website") return journeyPorts;
+  return { ...journeyPorts,
+    diagnosticSnapshot: (repository, root, head, label) => diagnosticSnapshot(repository, root, head, label, profile, fixture),
+    verifyEvidence: (evidenceDir, input) => profile.verifyEvidence(evidenceDir, { ...input,
+      requireRejectedDiagnosticFailure: fixture,
+      retention: { proofRoot: input.proofRoot, candidateRepository: input.candidateRepository, cleanupTargets: input.cleanupTargets } }),
+  };
+}
 export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV1, signal: AbortSignal,
-  ports: typeof journeyPorts = journeyPorts): Promise<B5VerdictV1> {
+  overrides?: Partial<typeof journeyPorts>): Promise<B5VerdictV1> {
+  let profile: JourneyProfile = FIRST_WEBSITE_PROFILE;
+  let ports = { ...journeyPorts, ...overrides };
   const owner = preflight.controllerOwner ?? createFirstWebsiteControllerOwnerV1(signal);
   const { config, evidenceDir, digests } = preflight, root = config.scratchRoot;
   let host: FirstWebsiteHostV1 | undefined, acquiring: Promise<FirstWebsiteHostV1> | undefined;
@@ -571,7 +590,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   let wroteEvidence = false, wroteObservations = false, watching = true;
   let watcher: Promise<void> | undefined;
   const workSignal = owner.signal;
-  const statusChecks: Awaited<ReturnType<typeof runIndependentStatusCheckV1>>[] = [];
+  const statusChecks: { record: JourneyCheckRecordV1; output: string }[] = [];
   const actions: {receipt: import("./first-website-device").B5DeviceReceiptV1; browser?: z.infer<typeof b5ControllerBrowserEventsSchemaV1>}[] = [], observations: unknown[] = [], audits: unknown[] = [];
   const restarts: {phase:"waiting"|"final";at:string}[] = [];
   const startedAt = new Date().toISOString();
@@ -585,6 +604,8 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
   };
   try {
     owner.startDeadline(config.maxDurationMs, { ownerGates: !preflight.rehearsal }); workSignal.throwIfAborted();
+    if (preflight.profile?.id === "model-eval") profile = await resolveJourneyProfileV1(root, "model-eval");
+    ports = { ...journeyPortsForProfileV1(profile, preflight.providers?.transport === "scripted"), ...overrides };
     const faultBytes = await readFirstWebsitePrivateBytesV1(config.faultInputFile, root);
     const neutralBytes = await readFirstWebsitePrivateBytesV1(config.reviewInputFile, root);
     need(b5Bytes(faultBytes) === digests.faultInput && b5Bytes(neutralBytes) === digests.reviewInput, "B5_INPUT_CHANGED");
@@ -634,20 +655,20 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
           read: async signal => {
             const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk", undefined, signal));
             const saved = desk.loopRequests.find(row => row.requestId === requestId);
-            need(saved && saved.description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN");
+            need(saved && saved.description === profile.requestText, "B5_REQUEST_JOIN");
             return saved.runLink;
           },
           accepted: async link => {
             const snapshot = await host!.proof.readSnapshot(); assertB5FaultValueAbsentV1(snapshot, policy);
             assertFirstWebsiteOwnerCommandV1(snapshot, { requestId: requestId!, runLinkId: link.runLinkId,
-              loopRunId: link.loopRunId, operation: "intake", body: { description: B5_REQUEST_TEXT } });
+              loopRunId: link.loopRunId, operation: "intake", body: { description: profile.requestText } });
           },
         });
         intakeLinkReady = true;
       }
       const result = loopDecisionStatusSchemaV1.parse(await service(`${projectPath}/${encodeURIComponent(requestId)}/status`, undefined, activeSignal));
       need(result.request.requestId === requestId && result.request.projectId === host!.proof.project.projectId
-        && result.request.description === B5_REQUEST_TEXT && result.request.requestSha256 === b5Bytes(B5_REQUEST_TEXT).slice(7)
+        && result.request.description === profile.requestText && result.request.requestSha256 === b5Bytes(profile.requestText).slice(7)
         && result.request.settingsSha256 === digests.settings?.slice(7), "B5_REQUEST_JOIN");
       const observed = { requestId, state: result.engine.state, revision: result.engine.revision,
         inputVersion: result.engine.inputVersion, localVersion: result.request.currentVersion };
@@ -681,7 +702,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
           need(desk.loopRequests.length <= 1, "B5_REQUEST_JOIN");
           if (desk.loopRequests.length) {
             const saved = desk.loopRequests[0];
-            need(saved.description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN"); requestId = saved.requestId;
+            need(saved.description === profile.requestText, "B5_REQUEST_JOIN"); requestId = saved.requestId;
             canObserveStatus = !!saved.runLink;
           }
         }
@@ -758,7 +779,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
     }
     await phase("connect", "phone"); await phase("connect", "desktop"); await phase("prepare", "phone");
     const desk = loopImprovementDeskViewSchemaV1.parse(await service(projectPath + "/desk"));
-    need(desk.loopRequests.length === 1 && desk.loopRequests[0].description === B5_REQUEST_TEXT, "B5_REQUEST_JOIN");
+    need(desk.loopRequests.length === 1 && desk.loopRequests[0].description === profile.requestText, "B5_REQUEST_JOIN");
     requestId = desk.loopRequests[0].requestId;
     let s = await status();
     need(s.engine.state === "draft" && !s.engine.confirmation && !s.display.confirmationCurrent && s.display.startState === "not_started", "B5_INPUT_BINDING_LATE");
@@ -770,7 +791,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         loopRunId: runId, operation, ...extra });
       observations.push({ operation, commandId: id, at: snapshot.readAt });
     };
-    await command("intake", { body: { description: B5_REQUEST_TEXT } });
+    await command("intake", { body: { description: profile.requestText } });
     const readRun = () => readB5RunWithRetryV1({ read: () => host!.proof.readRun(runId), signal: workSignal });
     const projection = await readRun();
     const carrierBytes = await readFirstWebsitePrivateBytesV1(config.a2.contractFile, root);
@@ -838,7 +859,7 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
         const after = await status();
         need(!after.engine.question || after.engine.question.questionId !== question.questionId, "B5_ANSWER_NOT_OBSERVED");
         await command("answer", { inputVersion: question.inputVersion, body: { questionId: question.questionId, questionReportSha256: question.reportSha256 },
-          ...(!questionSeen ? { answer: "Amber" } : {}) });
+          ...(!questionSeen && (profile.id === "first-website" || preflight.providers.transport === "scripted") ? { answer: profile.fixtureQuestionAnswer } : {}) });
         questionSeen = true;
       } else if (gate?.kind === "approve") {
         need(s.engine.approval, "B5_APPROVAL_REQUIRED");
@@ -910,7 +931,17 @@ export async function runFirstWebsiteJourneyV1(preflight: FirstWebsitePreflightV
       }
       verdict.state = "incomplete"; verdict.reasons.push(codeOf(error));
     }
-    finally { owner.dispose(); }
+    finally {
+      try {
+        if (preflight.sourceCheck) {
+          await mkdir(evidenceDir, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
+          await chmod(evidenceDir, 0o700); wroteEvidence = true;
+          await preflight.sourceCheck(join(config.scratchRoot, "evidence/b11-source-comparison.json"));
+        }
+      }
+      catch { verdict.state = "incomplete"; verdict.reasons.push("B11_FOREIGN_WRITE"); }
+      owner.dispose();
+    }
   }
   if (cleanupResult) {
     cleanupResult.overrunMs = owner.capAt() === undefined ? 0 : Math.max(0, Date.now() - owner.capAt()!);
@@ -969,7 +1000,7 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
   projection: Awaited<ReturnType<FirstWebsiteHostV1["proof"]["readRun"]>>;
   actions: {receipt: import("./first-website-device").B5DeviceReceiptV1; browser?: z.infer<typeof b5ControllerBrowserEventsSchemaV1>}[];
   restarts: {phase:"waiting"|"final";at:string}[]; receipts: import("../../tests/helpers/improve-control-room-first-website").B5BindInputReceiptV1[];
-  statusChecks: Awaited<ReturnType<typeof runIndependentStatusCheckV1>>[];
+  statusChecks: { record: JourneyCheckRecordV1; output: string }[];
   card: import("../../src/improve-control-room/v1/loop-candidate-wire").LoopCandidateCardV1;
   cleanup: B5ControllerCleanupV1; owned: import("../../tests/helpers/improve-control-room-first-website").FirstWebsiteOwnedV1;
   snapshot: Awaited<ReturnType<FirstWebsiteHostV1["proof"]["readSnapshot"]>>; startedAt: string; cleanupAt: string;
@@ -1121,7 +1152,7 @@ export async function writeFirstWebsiteControllerEvidenceV1(input: {
       const bytes=await readFirstWebsitePrivateBytesV1(seal.path,run.workDir);
       need(b5Bytes(bytes) === `sha256:${seal.sha256}`,"B5_REVIEW_SCAN_CHANGED");
       const sidecar=z.object({checks:z.array(z.object({id:z.string(),status:z.string()}).passthrough())}).passthrough().parse(JSON.parse(bytes.toString("utf8")));
-      const check=sidecar.checks.find(c=>c.id === "site-status"); need(check && ["PASS","FAIL"].includes(check.status),"B5_DIAGNOSTIC_RESULT");
+      const check=sidecar.checks.find(c=>c.id === (p.profile?.id === "model-eval" ? "lean-isolation" : "site-status")); need(check && ["PASS","FAIL"].includes(check.status),"B5_DIAGNOSTIC_RESULT");
       diagnostic=check.status as "PASS"|"FAIL";
     }
     const head=s.role === "build" ? run.steps[i+1]?.headAtStart : s.headAtStart;

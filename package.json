@@ -272,7 +272,8 @@
     "test:loop-selection:host": "node scripts/check-loop-selection-host-gate.mjs",
     "test:loop-policy:real:enforcement": "node --import tsx tests/loop-policy.test.ts --host-gate enforcement",
     "test:improve-control-room-first-website-mutations:part-1": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern=\"^B5 verifier guard mutations partition 1 \" tests/improve-control-room-first-website-mutations.test.ts",
-    "test:improve-control-room-first-website-mutations:part-2": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern=\"^B5 verifier guard mutations partition 2 \" tests/improve-control-room-first-website-mutations.test.ts"
+    "test:improve-control-room-first-website-mutations:part-2": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 --test-name-pattern=\"^B5 verifier guard mutations partition 2 \" tests/improve-control-room-first-website-mutations.test.ts",
+    "test:improve-control-room-second-project": "CONTROL_ROOM_TEST_BLOCK_AGENT_CLI=1 node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 --test-timeout=600000 tests/improve-control-room-second-project.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
